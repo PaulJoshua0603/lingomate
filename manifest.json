@@ -1,8 +1,8 @@
 {
-  "name": "Lingomate · Aussie, American & British English",
+  "name": "Lingomate · Your Australian English coach",
   "short_name": "Lingomate",
   "description": "Learn Australian, American and British English: dictionary, slang, flashcards, quizzes and pronunciation.",
-  "start_url": "./#dictionary",
+  "start_url": "./#home",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

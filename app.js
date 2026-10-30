@@ -123,12 +123,12 @@ const playAudio = url => new Audio(url).play().catch(() => toast('Recording unav
 /* ---------- Voice input (shared) ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const SR_ERR = { 'not-allowed': 'Microphone permission denied', 'service-not-allowed': 'Microphone permission denied', 'no-speech': 'No speech detected. Try again.', network: 'Voice service needs an internet connection', aborted: '' };
-function listen(lang, { onStart, onText, onEnd } = {}) {
+function listen(lang, { onStart, onText, onEnd, continuous } = {}) {
   if (!SR) { toast('Voice input needs Chrome, Edge or Safari'); return null; }
   const rec = new SR();
-  rec.lang = lang; rec.interimResults = true; rec.maxAlternatives = 5;
+  rec.lang = lang; rec.interimResults = true; rec.maxAlternatives = 5; rec.continuous = !!continuous;
   rec.onstart = () => onStart?.();
-  rec.onresult = e => onText?.(Array.from(e.results).map(r => r[0].transcript).join(''), e);
+  rec.onresult = e => onText?.(Array.from(e.results).map(r => r[0].transcript.trim()).join(' '), e);
   rec.onerror = e => { const m = SR_ERR[e.error] ?? 'Voice error: ' + e.error; if (m) toast(m); };
   rec.onend = () => onEnd?.();
   try { rec.start(); } catch { toast('Could not start the microphone'); return null; }
@@ -644,16 +644,6 @@ async function share(text) {
 }
 
 /* ---------- Focus (All / one country) ---------- */
-function moveInk(container, el) {
-  const ink = $('.ink', container);
-  if (!el || !ink) return;
-  ink.style.width = el.offsetWidth + 'px';
-  ink.style.height = el.offsetHeight + 'px';
-  ink.style.transform = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
-}
-function syncInks() {
-  moveInk($('#tabs'), $('.tab[aria-current=page]'));
-}
 const FOCUS_LABEL = { all: 'All countries', ph: 'Philippines', us: 'United States', au: 'Australia', uk: 'United Kingdom' };
 const focusFlags = f => flags(f === 'all' ? RORDER : [f]);
 $('#rdMenu').innerHTML = Object.keys(FOCUS_LABEL).map(f => `<button role="option" data-region="${f}">${focusFlags(f)}<span>${FOCUS_LABEL[f]}</span></button>`).join('');
@@ -668,14 +658,14 @@ function setFocus(f) {
   menu(false);
   $('#accent').textContent = REGIONS[accent()].name;
   $('#dictCount').innerHTML = `<b>${pool().length}</b> ${f === 'all' ? 'words from the Philippines, the US, Australia &amp; the UK' : REGIONS[f].name + ' words'}`;
-  syncInks(); renderPhrases(); renderWod(); renderDict(); buildQueue(); renderWords();
+  renderPhrases(); renderWod(); renderDict(); buildQueue(); renderWords();
   clearTimeout(quiz.timer);
   quiz.q = null;
   if ($('#v-quiz').classList.contains('active')) nextQ();
 }
 
 /* ---------- Backup & restore (progress lives in this browser only) ---------- */
-const BACKUP_KEYS = ['words', 'prog', 'days', 'qbest', 'saved', 'history', 'focus'];
+const BACKUP_KEYS = ['words', 'prog', 'days', 'qbest', 'saved', 'history', 'focus', 'coach-settings', 'coach-progress'];
 const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const isEntry = e => isObj(e) && ['text', 'out', 'to'].every(k => typeof e[k] === 'string');
 const CLEAN = {
@@ -686,10 +676,13 @@ const CLEAN = {
   days: v => isObj(v) && typeof v.n === 'number' && v,
   qbest: v => Number.isFinite(v) && v,
   focus: v => FOCI.includes(v) && v,
+  'coach-settings': v => isObj(v) && { ...v, accessCode: store.get('coach-settings', {}).accessCode || '' },
+  'coach-progress': v => isObj(v) && v,
 };
 function exportBackup() {
   const data = { app: 'lingomate', version: 1, exported: new Date().toISOString() };
   BACKUP_KEYS.forEach(k => (data[k] = store.get(k, null)));
+  if (data['coach-settings']) delete data['coach-settings'].accessCode; // never write the access code to a file
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
   a.download = `lingomate-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -790,12 +783,14 @@ $('#themeBtn').onclick = e => {
 };
 
 /* ---------- Router ---------- */
-const VIEWS = ['dictionary', 'learn', 'quiz', 'words', 'translate'];
+const LIBRARY = ['dictionary', 'learn', 'quiz', 'words', 'translate'];
+const VIEWS = ['home', 'talk', 'checkin', 'voice', 'slang', 'call', 'progress', 'settings', ...LIBRARY];
 function route() {
-  const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'dictionary';
+  const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'home';
   $$('.view').forEach(s => s.classList.toggle('active', s.id === 'v-' + v));
-  $$('.tab').forEach(t => t.setAttribute('aria-current', t.dataset.view === v ? 'page' : 'false'));
-  syncInks();
+  $$('.nav-link').forEach(t => t.setAttribute('aria-current', t.dataset.view === v ? 'page' : 'false'));
+  document.body.toggleAttribute('data-lib', LIBRARY.includes(v)); // the country filter only applies to the word library
+  if (typeof coachRoute === 'function') coachRoute(v);
   if (v === 'quiz' && !quiz.q) nextQ();
   if (v === 'words') renderWords();
   if (v === 'dictionary') renderDict();
@@ -804,9 +799,7 @@ function route() {
 
 /* ---------- Init ---------- */
 addEventListener('hashchange', route);
-addEventListener('resize', syncInks);
 addEventListener('scroll', () => $('#topbar').classList.toggle('scrolled', scrollY > 8), { passive: true });
-document.fonts?.ready.then(syncInks);
 setOutput('');
 renderHist();
 renderQStats();
