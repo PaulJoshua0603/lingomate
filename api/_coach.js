@@ -129,7 +129,7 @@ function feedbackPrompt(p) {
     '- corrected: the same message with grammar, word choice and punctuation fixed, changing as little as possible. If it was already correct, repeat it.',
     '- natural: how a friendly Australian colleague would naturally say the same thing.',
     p.explain === 'taglish'
-      ? '- explanation: explain each mistake briefly in Taglish, the way a friendly Filipino tutor talks, for example: "Past tense dapat kasi tapos na ang action, kaya \'I finished\', hindi \'I finish\'." If there were no mistakes, praise one specific thing and suggest one upgrade.'
+      ? '- explanation: MUST be in Taglish (mostly Filipino sentences, English only for the words being corrected), the way a friendly Filipino tutor talks. Never write it fully in English. One short sentence per mistake, for example: "Dapat \'It\'s\' (may apostrophe) kasi \'It is\' ang ibig sabihin. Past tense dapat ang \'finished\' kasi tapos na ang action. Plural ang \'new hires\' kasi dalawa sila." If there were no mistakes, praise one specific thing and suggest one upgrade, also in Taglish.'
       : '- explanation: explain each mistake briefly in simple English. If there were no mistakes, praise one specific thing and suggest one upgrade.',
     `- vocabulary: 2 to 4 useful words or expressions from your reply or the natural version, each with a short meaning${p.explain === 'taglish' ? ' (add the Filipino meaning)' : ''}.`,
     '- followUp: the follow-up question you asked in `reply`.',
@@ -315,7 +315,7 @@ export async function coachReview(input) {
     '- summary: 2 or 3 sentences on how the conversation went.',
     '- strengths: 2 or 3 specific things they did well.',
     '- improvements: up to 5 of their lines that most need work, each with corrected (minimal fixes), natural (how an Australian colleague would say it) and explanation.',
-    `- explanation and confidenceTip in ${p.explain === 'taglish' ? 'Taglish, like a friendly Filipino tutor' : 'simple English'}.`,
+    `- explanation and confidenceTip in ${p.explain === 'taglish' ? 'Taglish (mostly Filipino sentences, English only for the corrected words), like a friendly Filipino tutor. Never fully in English' : 'simple English'}.`,
     `- vocabulary: 3 to 5 useful expressions for this kind of conversation${p.explain === 'taglish' ? ', with Filipino meanings' : ''}.`,
     '- confidenceTip: one encouraging, practical tip for speaking up with Australian colleagues.',
     '- grammarScore: 0 to 100 overall for their English in this conversation.',
