@@ -557,12 +557,12 @@ function renderSettings() {
   </div>
   <div class="card set-card setup"><h3>AI connection</h3>
     <label class="field"><span>Access code</span><div class="range-row"><input type="password" id="codeIn" value="${esc(CS.accessCode)}" autocomplete="off" aria-label="Access code"><button type="button" class="btn primary rp" data-coach="savecode">Save & check</button></div></label>
-    ${statusRow('AI tutor (Claude)', lockedOr(ST.ai))}
+    ${statusRow(`AI tutor${ST.provider ? ` (${ST.provider === 'groq' ? 'Groq' : 'Claude'})` : ''}`, lockedOr(ST.ai))}
     ${statusRow('Australian neural voice (Azure)', lockedOr(ST.voice), true)}
     ${statusRow('Pronunciation scoring (Azure)', lockedOr(ST.pronunciation), true)}
     <details><summary>How to connect (for the site owner)</summary><ol>
-      <li>Create an API key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</li>
-      <li>In Vercel, open the <b>lingomate</b> project → <b>Settings → Environment Variables</b> and add <code>ANTHROPIC_API_KEY</code> (your key) and <code>COACH_ACCESS_CODE</code> (a passphrase you make up).</li>
+      <li>Create an API key at <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a> (or use an Anthropic key from console.anthropic.com).</li>
+      <li>In Vercel, open the <b>lingomate</b> project → <b>Settings → Environment Variables</b> and add <code>GROQ_API_KEY</code> (or <code>ANTHROPIC_API_KEY</code>) and <code>COACH_ACCESS_CODE</code> (a passphrase you make up).</li>
       <li>Optional, for the neural Australian voice and precise pronunciation scores: create an Azure Speech resource and add <code>AZURE_SPEECH_KEY</code> and <code>AZURE_SPEECH_REGION</code> (for example <code>australiaeast</code>).</li>
       <li>Redeploy, then enter your access code above.</li>
     </ol><p class="muted">Keys stay on the server. The browser only ever sees your access code.</p></details>

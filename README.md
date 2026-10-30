@@ -8,10 +8,11 @@ The AI features run in Vercel serverless functions (`api/`), so API keys never r
 
 | Variable | Required | What it is |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | Yes | Your Claude API key from console.anthropic.com |
+| `GROQ_API_KEY` | One of these | Groq API key (console.groq.com). Used when set; tries `openai/gpt-oss-120b`, then `llama-3.3-70b-versatile`, then `openai/gpt-oss-20b` |
+| `ANTHROPIC_API_KEY` | One of these | Claude API key (console.anthropic.com). Used when no Groq key is set |
 | `COACH_ACCESS_CODE` | Yes | A passphrase you make up. The app asks for it once (Settings → AI connection) so strangers can't spend your API credits through the public URL |
 | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` | Optional | An Azure Speech resource, for the neural Australian voice and precise pronunciation scores. Without it, the app uses the device's voice and a basic pronunciation check, and labels them as such |
-| `COACH_MODEL` | Optional | Claude model ID. Defaults to `claude-opus-5-5` |
+| `COACH_MODEL` | Optional | Force a specific model ID for the active provider. Claude defaults to `claude-opus-5-5` |
 
 Redeploy after adding variables. The AI uses `claude-opus-5-5` at low effort for quick replies, with server-side refusal fallbacks enabled.
 

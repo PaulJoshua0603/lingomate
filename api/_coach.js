@@ -3,11 +3,15 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { timingSafeEqual } from 'node:crypto';
 
-export const MODEL = process.env.COACH_MODEL || 'claude-opus-5-5';
 const env = k => process.env[k] || '';
+// Groq is used when GROQ_API_KEY is set; otherwise Anthropic (Claude).
+export const provider = () => (env('GROQ_API_KEY') ? 'groq' : 'anthropic');
+const GROQ_MODELS = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'];
+let groqModel = null; // first Groq model that answered; skips retired ones on later requests
+export const activeModel = () => env('COACH_MODEL') || (provider() === 'groq' ? groqModel || GROQ_MODELS[0] : 'claude-opus-5-5');
 
 export const configured = {
-  ai: () => !!(env('ANTHROPIC_API_KEY') && env('COACH_ACCESS_CODE')),
+  ai: () => !!((env('GROQ_API_KEY') || env('ANTHROPIC_API_KEY')) && env('COACH_ACCESS_CODE')),
   azure: () => !!(env('AZURE_SPEECH_KEY') && env('AZURE_SPEECH_REGION') && env('COACH_ACCESS_CODE')),
 };
 
@@ -200,9 +204,53 @@ const REVIEW = {
 let client;
 const getClient = () => (client ??= new Anthropic({ timeout: 50_000, maxRetries: 1 }));
 
-export async function askClaude({ system, messages, schema }) {
+const ask = req => (provider() === 'groq' ? askGroq(req) : askClaude(req));
+
+// Groq: OpenAI-compatible chat completions over plain HTTP.
+async function askGroq({ system, messages, schema }) {
+  // The last model that worked goes first; if it has been retired, the others are still tried.
+  const candidates = env('COACH_MODEL') ? [env('COACH_MODEL')] : [...new Set([groqModel, ...GROQ_MODELS].filter(Boolean))];
+  const prompt = `${system}\n\nReply with only a JSON object matching this JSON schema:\n${JSON.stringify(schema)}`;
+  for (const model of candidates) {
+    const gptOss = model.startsWith('openai/gpt-oss');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let r;
+      try {
+        r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          signal: AbortSignal.timeout(50_000),
+          headers: { Authorization: `Bearer ${env('GROQ_API_KEY')}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'system', content: prompt }, ...messages],
+            // gpt-oss supports strict schema-constrained output; other models get JSON mode plus the schema in the prompt
+            response_format: gptOss ? { type: 'json_schema', json_schema: { name: 'coach_reply', strict: true, schema } } : { type: 'json_object' },
+            ...(gptOss ? { reasoning_effort: 'low' } : { temperature: 0.7 }),
+            max_completion_tokens: 4096,
+          }),
+        });
+      } catch {
+        throw new CoachError(503, "Couldn't reach the AI service. Try again in a moment.");
+      }
+      if (r.ok) {
+        const text = (await r.json()).choices?.[0]?.message?.content;
+        try { const out = JSON.parse(text); groqModel = model; return out; } catch { continue; } // malformed JSON: try once more
+      }
+      const err = (await r.json().catch(() => ({}))).error || {};
+      if (r.status === 401) throw new CoachError(500, "The server's Groq API key was rejected. Check GROQ_API_KEY in Vercel.");
+      if (r.status === 429) throw new CoachError(429, 'The tutor is getting too many requests. Wait a moment and try again.');
+      if (r.status === 404 || /model_(not_found|decommissioned)/.test(err.code || '')) break; // try the next model
+      if (r.status === 400 && err.code === 'json_validate_failed') continue;
+      console.error('Groq error', r.status, err.code, err.message);
+      throw new CoachError(503, 'The tutor is busy right now. Try again in a few seconds.');
+    }
+  }
+  throw new CoachError(502, 'The AI service could not produce an answer. Please try again.');
+}
+
+async function askClaude({ system, messages, schema }) {
   const params = {
-    model: MODEL,
+    model: activeModel(),
     max_tokens: 16000,
     system,
     messages,
@@ -238,7 +286,7 @@ export async function coachTurn(input) {
   ];
   if (userText) messages.push({ role: 'user', content: userText });
   const system = [basePrompt(p), rolePrompt(mode, p, input), withFeedback ? feedbackPrompt(p) : ''].filter(Boolean).join('\n\n');
-  const out = await askClaude({ system, messages, schema: withFeedback ? TURN_FEEDBACK : TURN });
+  const out = await ask({ system, messages, schema: withFeedback ? TURN_FEEDBACK : TURN });
   const fb = out.feedback;
   return {
     reply: clip(out.reply, 1200),
@@ -272,7 +320,7 @@ export async function coachReview(input) {
     '- confidenceTip: one encouraging, practical tip for speaking up with Australian colleagues.',
     '- grammarScore: 0 to 100 overall for their English in this conversation.',
   ].join('\n');
-  const out = await askClaude({ system, messages: [{ role: 'user', content: `Conversation transcript:\n\n${transcript}` }], schema: REVIEW });
+  const out = await ask({ system, messages: [{ role: 'user', content: `Conversation transcript:\n\n${transcript}` }], schema: REVIEW });
   return {
     summary: clip(out.summary, 1200),
     strengths: (out.strengths || []).slice(0, 4).map(s => clip(s, 300)),
