@@ -525,3 +525,6 @@ textarea::placeholder { color: var(--muted); }
 .rd-menu button[aria-selected=true] { background: var(--soft); color: var(--a1); }
 .rd-menu button[aria-selected=true]::after { content: '✓'; margin-left: auto; font-weight: 700; }
 @keyframes menuIn { from { opacity: 0; transform: translateY(-4px) scale(.97); } }
+
+/* Opening the sheet focuses the dialog itself; no ring needed there */
+dialog:focus, dialog:focus-visible { outline: none; }
