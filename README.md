@@ -15,7 +15,9 @@ python -m http.server 5173
 
 1. Push this folder to a GitHub repository.
 2. In Vercel, **Add New → Project**, import the repo, keep the framework preset as **Other**, and deploy. No build command or output directory is needed.
-3. After the first deploy, replace `og-image.png` in the `og:image` tag in `index.html` with the full URL (for example `https://your-app.vercel.app/og-image.png`) so link previews show the image.
+3. If the domain changes, update the `og:image` and `og:url` tags in `index.html`.
+
+Live: https://lingomate-self.vercel.app
 
 ## Project layout
 
