@@ -15,14 +15,17 @@ export default async function handler(req, res) {
   if (!text) return send(res, 400, { error: 'No text to speak.' });
   const voice = VOICES[req.body?.voice] || VOICES['au-female'];
   const pct = Math.round((Math.min(1.5, Math.max(0.5, Number(req.body?.rate) || 1)) - 1) * 100);
-  const ssml = `<speak version="1.0" xml:lang="${voice.lang}"><voice name="${voice.name}"><prosody rate="${pct >= 0 ? '+' : ''}${pct}%">${xml(text)}</prosody></voice></speak>`;
+  // Shorter, even pauses at sentence ends and commas so the speech flows like a real conversation
+  const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${voice.lang}"><voice name="${voice.name}">`
+    + '<mstts:silence type="Leading-exact" value="0ms"/><mstts:silence type="Sentenceboundary-exact" value="250ms"/><mstts:silence type="Comma-exact" value="120ms"/>'
+    + `<prosody rate="${pct >= 0 ? '+' : ''}${pct}%">${xml(text)}</prosody></voice></speak>`;
   try {
     const r = await fetch(`https://${process.env.AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`, {
       method: 'POST',
       headers: {
         'Ocp-Apim-Subscription-Key': process.env.AZURE_SPEECH_KEY,
         'Content-Type': 'application/ssml+xml',
-        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+        'X-Microsoft-OutputFormat': 'audio-48khz-96kbitrate-mono-mp3',
         'User-Agent': 'lingomate',
       },
       body: ssml,

@@ -1,5 +1,5 @@
 // Offline support: app files are network-first (updates show immediately), fonts/flags are cache-first.
-const CACHE = 'lingomate-v6';
+const CACHE = 'lingomate-v7';
 const SHELL = ['./', 'styles.css', 'app.js', 'data.js', 'coach.js', 'coach-data.js', 'manifest.json', 'icons/icon.svg', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 const STATIC_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'flagcdn.com'];
 

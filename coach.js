@@ -38,16 +38,17 @@ function logScore(list, s) { if (Number.isFinite(s)) { CP[list].push({ t: Date.n
 function addVocab(v) { if (v?.term && !CP.vocab[v.term]) CP.vocab[v.term] = { meaning: v.meaning || '', t: Date.now() }; }
 
 /* ---------- Server connection ---------- */
-let ST = { reachable: false, ai: false, voice: false, pronunciation: false, authorized: false, model: null };
+let ST = { reachable: false, ai: false, voice: false, pronunciation: false, transcribe: false, authorized: false, model: null };
 const aiReady = () => ST.ai && ST.authorized;
 const azureReady = () => ST.voice && ST.authorized;
+const transcribeReady = () => ST.transcribe && ST.authorized;
 async function checkStatus() {
   try {
     const r = await fetch('/api/status', { headers: { 'x-access-code': CS.accessCode }, cache: 'no-store' });
     if (!r.ok || !(r.headers.get('content-type') || '').includes('json')) throw new Error('no server');
     ST = { ...(await r.json()), reachable: true };
   } catch {
-    ST = { reachable: false, ai: false, voice: false, pronunciation: false, authorized: false, model: null };
+    ST = { reachable: false, ai: false, voice: false, pronunciation: false, transcribe: false, authorized: false, model: null };
   }
   refreshCoach();
 }
@@ -77,15 +78,21 @@ let speaking = false, audioEl = null, sayTok = 0;
 const voiceLang = () => (CS.accent === 'australian' ? 'en-AU' : 'en-US');
 const FEMALE = /natasha|karen|catherine|annette|carly|freya|tina|elsie|kim|joanne|female|samantha|jenny|aria|zira|ava|allison|libby|sonia/i;
 const MALE = /william|lee|james|duncan|ken|tim|neil|darren|male|guy|david|mark|daniel|alex|fred|ryan|thomas/i;
+const NATURAL = /natural|online|premium|enhanced/i;
 function deviceVoice() {
   const L = voiceLang().toLowerCase(), want = CS.voice === 'male' ? MALE : FEMALE;
   const list = voices.filter(v => v.lang.toLowerCase().replace('_', '-') === L);
-  return list.find(v => want.test(v.name) && /natural|online|premium|enhanced/i.test(v.name)) || list.find(v => want.test(v.name)) || list[0] || null;
+  // A natural (neural) voice of either gender sounds far more human than a robotic one of the chosen gender
+  return list.find(v => want.test(v.name) && NATURAL.test(v.name)) || list.find(v => NATURAL.test(v.name)) || list.find(v => want.test(v.name)) || list[0] || null;
 }
+// Dashes, brackets, ellipses and emoji make voices pause awkwardly or read symbols aloud
+const speakable = t => String(t).replace(/\p{Extended_Pictographic}/gu, '').replace(/\s*(?:[—–;…]|\.{3}|\s-\s)\s*/g, ', ')
+  .replace(/[()[\]{}"*_#~]/g, '').replace(/\s+([,.!?])/g, '$1').replace(/([,.!?]),+/g, '$1').replace(/\s{2,}/g, ' ').trim();
 function setSpeaking(on) { speaking = on; if (SESS.call && !SESS.call.summary && currentView() === 'call') renderCall(); }
 function stopSpeaking() { sayTok++; synth?.cancel(); audioEl?.pause(); audioEl = null; if (speaking) setSpeaking(false); }
 async function say(text, rate = CS.speed) {
   stopSpeaking();
+  text = speakable(text || '');
   if (!text) return;
   const tok = sayTok;
   setSpeaking(true);
@@ -115,6 +122,37 @@ function deviceSay(text, rate) {
   });
 }
 
+/* ---------- Recording an answer (listen back, re-record, fix the words before sending) ---------- */
+// Records the mic for playback. Unless the server transcribes the audio (Whisper), the browser's speech
+// recognition runs alongside for the words. Returns { stop, abort, done } or null; done gives { blob, url, text } or { aborted }.
+async function capture({ recognise, onText } = {}) {
+  const audio = navigator.mediaDevices?.getUserMedia && window.MediaRecorder ? await startRecording().catch(() => null) : null;
+  if (!audio && !recognise) throw new Error('Allow microphone access to record your answer.');
+  let sr = null, text = '', aborted = false;
+  const srDone = new Promise(res => {
+    if (recognise) sr = listen(voiceLang(), { continuous: true, onText: t => { text = t; onText?.(t); }, onEnd: res });
+    if (!sr) res();
+  });
+  if (!audio && !sr) return null;
+  const stop = () => { audio?.stop(); sr?.stop(); };
+  const auto = setTimeout(stop, 120000); // keeps uploads small
+  return {
+    stop,
+    abort: () => { aborted = true; stop(); },
+    done: Promise.all([audio?.done, srDone]).then(([blob]) => {
+      clearTimeout(auto);
+      if (aborted) return { aborted };
+      return { blob: blob?.size ? blob : null, url: blob?.size ? URL.createObjectURL(blob) : '', text: text.trim() };
+    }),
+  };
+}
+function dropTake(s) { if (s?.take?.url) URL.revokeObjectURL(s.take.url); if (s) s.take = null; }
+const takeHtml = (t, m) => `<div class="take">
+    <p>${t.busy ? 'Writing down what you said…' : 'Listen back, then check the words and fix anything we misheard before you send.'}</p>
+    ${t.url ? `<audio controls preload="metadata" src="${t.url}" aria-label="Your recording"></audio>` : ''}
+    <button type="button" class="btn rp" data-coach="retake" data-m="${m}"${t.busy ? ' disabled' : ''}>${icon('mic')}Re-record</button>
+  </div>`;
+
 /* ---------- Conversations (daily chat, weekly check-in, live call) ---------- */
 const SESS = {};
 let talkTopic = CS.topics[0] || 'daily', callScenario = 'surprise', coachRec = null, recMode = null;
@@ -143,7 +181,7 @@ async function turn(mode, userText = '') {
   const s = SESS[mode];
   if (!s || s.busy || s.ended) return;
   if (!aiReady()) return toast('The AI tutor is not connected. See Settings.');
-  if (userText) { s.items.push({ who: 'me', text: userText }); s.draft = ''; activity(1); }
+  if (userText) { s.items.push({ who: 'me', text: userText }); s.draft = ''; dropTake(s); activity(1); }
   s.busy = true; s.error = '';
   renderCoach(mode);
   try {
@@ -195,34 +233,53 @@ async function endSession(mode) {
   saveCP();
   renderCoach(mode);
 }
-function toggleMic(mode) {
-  if (coachRec) return coachRec.stop();
+// Records until you tap stop, then holds the answer for review instead of sending it straight away
+async function toggleMic(mode) {
+  if (recMode) return coachRec?.stop();
   const s = SESS[mode];
-  if (!s || s.busy || s.ended) return;
-  stopSpeaking();
-  let text = '';
+  if (!s || s.busy || s.ended || s.take?.busy) return;
+  stopSpeaking(); dropTake(s);
   recMode = mode;
-  coachRec = listen(voiceLang(), {
-    continuous: true, // keeps listening through pauses until you tap stop, so you're never cut off
-    onStart: () => renderCoach(mode),
-    onText: t => { text = t; const live = $(`#live-${mode}`); if (live) live.textContent = t; },
-    onEnd: () => { coachRec = null; recMode = null; renderCoach(mode); if (text.trim()) turn(mode, text.trim()); },
-  });
-  if (coachRec) renderCoach(mode);
+  try {
+    coachRec = await capture({ recognise: !transcribeReady(), onText: t => { const live = $(`#live-${mode}`); if (live) live.textContent = t; } });
+  } catch (e) { toast(e.message); }
+  if (!coachRec) { recMode = null; return renderCoach(mode); }
+  renderCoach(mode);
+  const take = await coachRec.done;
+  coachRec = null; recMode = null;
+  if (take.aborted || SESS[mode] !== s) return renderCoach(mode);
+  if (!take.blob && !take.text) { renderCoach(mode); return toast("We didn't catch anything. Tap the mic and try again."); }
+  s.take = { url: take.url, busy: !!take.blob && transcribeReady() };
+  if (take.text) s.draft = take.text;
+  renderCoach(mode);
+  if (!s.take.busy) return;
+  try {
+    const prompt = s.items.filter(i => i.who === 'ai').at(-1)?.text || '';
+    const out = await api('transcribe', { audio: b64(new Uint8Array(await take.blob.arrayBuffer())), type: take.blob.type, prompt });
+    if (s.take?.url === take.url) {
+      s.draft = out.text;
+      if (!out.text) toast("We couldn't make out any words. Tap Re-record and try again.");
+    }
+  } catch (e) { toast(e.message); }
+  if (s.take?.url === take.url) s.take.busy = false;
+  renderCoach(mode);
 }
 
 /* ---------- Conversation rendering ---------- */
 const fmtTime = s => { const sec = Math.floor(((s.endedAt || Date.now()) - s.started) / 1000); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
 const sayBtn = (text, label = 'Listen') => `<button class="icon-btn sm rp" data-coach="sayt" data-text="${esc(text)}" aria-label="${label}">${icon('vol')}</button>`;
+const MISTAKE_TYPES = { grammar: 'Grammar', 'sentence structure': 'Sentence structure', vocabulary: 'Vocabulary', 'word choice': 'Word choice' };
 function fbHtml(fb, open) {
-  const same = norm(fb.corrected) === norm(fb.original);
+  const ok = fb.correct ?? norm(fb.corrected) === norm(fb.original), list = fb.mistakes || [];
+  const better = norm(fb.natural) !== norm(ok ? fb.original : fb.corrected);
   return `<details class="fb card"${open ? ' open' : ''}>
-    <summary><span class="fb-score ${scoreCls(fb.grammarScore)}">${fb.grammarScore}</span>${same ? 'Nice one! No grammar mistakes' : 'Feedback on your answer'}</summary>
+    <summary><span class="fb-score ${scoreCls(fb.grammarScore)}">${fb.grammarScore}</span>${ok ? '✓ Grammatically correct' : `${list.length || 'Some'} thing${list.length === 1 ? '' : 's'} to fix`}</summary>
     <dl>
       <dt>You said</dt><dd>${esc(fb.original)}</dd>
-      ${same ? '' : `<dt>Corrected</dt><dd>${esc(fb.corrected)}</dd>`}
-      <dt>More natural (Aussie)</dt><dd><b>${esc(fb.natural)}</b> ${sayBtn(fb.natural)}</dd>
-      <dt>${CS.explain === 'taglish' ? 'Bakit? (Why)' : 'Why'}</dt><dd>${esc(fb.explanation)}</dd>
+      ${ok ? '' : `<dt>Corrected</dt><dd><b>${esc(fb.corrected)}</b> ${sayBtn(fb.corrected)}</dd>`}
+      ${list.length ? `<dt>What to improve</dt><dd><ul class="mistakes">${list.map(x => `<li><span class="tag">${esc(MISTAKE_TYPES[x.type] || x.type)}</span> <s>${esc(x.wrong)}</s> → <b>${esc(x.right)}</b><br><span class="muted">${esc(x.why)}</span></li>`).join('')}</ul></dd>` : ''}
+      ${better ? `<dt>${ok ? 'Even more natural (Aussie)' : 'More natural (Aussie)'}</dt><dd><b>${esc(fb.natural)}</b> ${sayBtn(fb.natural)}</dd>` : ''}
+      <dt>${ok ? 'Tip' : CS.explain === 'taglish' ? 'Bakit? (Why)' : 'Why'}</dt><dd>${esc(fb.explanation)}</dd>
       ${fb.vocabulary.length ? `<dt>Useful words</dt><dd class="vchips">${fb.vocabulary.map(v => `<span class="vchip"><b>${esc(v.term)}</b> ${esc(v.meaning)}</span>`).join('')}</dd>` : ''}
       <dt>Next question</dt><dd>${esc(fb.followUp)}</dd>
     </dl></details>`;
@@ -263,7 +320,7 @@ function renderCoach(mode) {
       <button class="btn primary rp" data-coach="start" data-m="${mode}"${aiReady() ? '' : ' disabled'}>${icon('chat')}${who.cta}</button></div>`;
     return;
   }
-  const listening = !!coachRec && recMode === mode;
+  const listening = !!coachRec && recMode === mode, hold = s.busy || !!s.take?.busy;
   box.innerHTML = `<div class="card chat${listening ? ' listening' : ''}">
     <div class="chat-head"><span class="av">${who.initial}</span><div><b>${esc(who.name)}</b><small>${who.sub}</small></div><span class="grow"></span>
       ${s.summary ? '' : `<button class="btn rp" data-coach="end" data-m="${mode}">End</button>`}</div>
@@ -272,10 +329,10 @@ function renderCoach(mode) {
       ${listening ? `<div class="msg me"><div class="bubble live" id="live-${mode}">Listening…</div></div>` : ''}
       ${s.error ? `<p class="chat-err">${esc(s.error)} <button class="link" data-coach="retry" data-m="${mode}">Try again</button></p>` : ''}
     </div>
-    ${s.summary ? '' : `<form class="composer" data-m="${mode}">
-      <button type="button" class="mic sm" data-coach="mic" data-m="${mode}" aria-label="${listening ? "I'm finished" : 'Answer by voice'}"${s.busy ? ' disabled' : ''}>${icon(listening ? 'stop' : 'mic')}</button>
-      <textarea rows="1" aria-label="Your answer" placeholder="${listening ? "Listening… tap ■ when you're finished" : 'Type your answer, or tap the mic and speak'}"${s.busy ? ' disabled' : ''}></textarea>
-      <button class="mic sm send" aria-label="Send"${s.busy ? ' disabled' : ''}>${icon('send')}</button>
+    ${s.summary ? '' : `${s.take ? takeHtml(s.take, mode) : ''}<form class="composer" data-m="${mode}">
+      <button type="button" class="mic sm" data-coach="mic" data-m="${mode}" aria-label="${listening ? "I'm finished" : 'Answer by voice'}"${hold ? ' disabled' : ''}>${icon(listening ? 'stop' : 'mic')}</button>
+      <textarea rows="1" aria-label="Your answer" placeholder="${listening ? "Listening… tap ■ when you're finished" : 'Type your answer, or tap the mic and speak'}"${hold ? ' disabled' : ''}></textarea>
+      <button class="mic sm send" aria-label="Send"${hold ? ' disabled' : ''}>${icon('send')}</button>
     </form>
     ${deferredFeedback(mode) ? '<p class="hint-line">Feedback comes at the end of the session (Settings → Correction timing).</p>' : ''}`}
   </div>${s.summary ? summaryCard(mode, s) : ''}`;
@@ -303,8 +360,9 @@ function renderCall() {
       <button class="btn call-go rp" data-coach="start" data-m="call"${aiReady() ? '' : ' disabled'}>${icon('phone')}Start call</button></div>`;
     return;
   }
-  const listening = !!coachRec && recMode === 'call';
-  const status = s.summary ? 'Call ended' : s.busy ? 'Thinking…' : speaking ? 'Speaking…' : listening ? "Listening… tap ■ when you're finished" : s.error || 'Your turn: tap the mic and answer';
+  const listening = !!coachRec && recMode === 'call', hold = s.busy || !!s.take?.busy;
+  const status = s.summary ? 'Call ended' : s.busy ? 'Thinking…' : speaking ? 'Speaking…' : listening ? "Listening… tap ■ when you're finished"
+    : s.error || (s.take ? 'Check your answer below, then send it' : 'Your turn: tap the mic and answer');
   box.innerHTML = `<div class="card call${speaking ? ' talking' : ''}${listening ? ' listening' : ''}">
     <span class="av xl">${who.initial}</span><h3>${esc(who.name)}</h3>
     <span class="call-time" id="callTime">${fmtTime(s)}</span>
@@ -312,9 +370,10 @@ function renderCall() {
     ${listening ? '<p class="live" id="live-call"></p>' : ''}
     ${s.summary ? '' : `<div class="call-ctl">
       <button class="ctl" data-coach="replay" aria-label="Repeat what ${esc(who.name)} said">${icon('vol')}<span>Repeat</span></button>
-      <button class="mic xl" data-coach="mic" data-m="call" aria-label="${listening ? "I'm finished" : 'Answer'}"${s.busy ? ' disabled' : ''}>${icon(listening ? 'stop' : 'mic')}</button>
+      <button class="mic xl" data-coach="mic" data-m="call" aria-label="${listening ? "I'm finished" : 'Answer'}"${hold ? ' disabled' : ''}>${icon(listening ? 'stop' : 'mic')}</button>
       <button class="ctl end" data-coach="end" data-m="call" aria-label="End call">${icon('phone')}<span>End</span></button></div>
-    <form class="composer call-type" data-m="call"><textarea rows="1" aria-label="Type your answer" placeholder="Or type your answer"${s.busy ? ' disabled' : ''}></textarea><button class="mic sm send" aria-label="Send"${s.busy ? ' disabled' : ''}>${icon('send')}</button></form>`}
+    ${s.take ? takeHtml(s.take, 'call') : ''}
+    <form class="composer call-type" data-m="call"><textarea rows="1" aria-label="Type your answer" placeholder="Or type your answer"${hold ? ' disabled' : ''}></textarea><button class="mic sm send" aria-label="Send"${hold ? ' disabled' : ''}>${icon('send')}</button></form>`}
     <details class="transcript"${s.summary ? ' open' : ''}><summary>Transcript</summary>
       ${s.items.map(it => `<p class="tl"><b>${it.who === 'ai' ? esc(who.name) : 'You'}:</b> ${esc(it.text)}</p>`).join('')}</details>
   </div>${s.summary ? summaryCard('call', s) : ''}`;
@@ -325,7 +384,7 @@ setInterval(() => { const el = $('#callTime'), s = SESS.call; if (el && s && !s.
 
 /* ---------- Voice practice ---------- */
 const ALL_SENT = Object.values(SENTENCES).flat();
-const VP = { tab: 'repeat', cat: Object.keys(SENTENCES)[0], idx: 0, res: null, rec: null, busy: false, dIdx: Math.random() * ALL_SENT.length | 0, dRes: null, dTyped: '', cIdx: 0, cOrder: null, cPick: null };
+const VP = { tab: 'repeat', cat: Object.keys(SENTENCES)[0], idx: 0, res: null, rec: null, take: null, busy: false, dIdx: Math.random() * ALL_SENT.length | 0, dRes: null, dTyped: '', cIdx: 0, cOrder: null, cPick: null };
 
 // Word-level alignment (longest common subsequence) of what was heard against the target sentence
 function align(ref, heard) {
@@ -364,7 +423,12 @@ function repeatPane() {
       <span class="grow"></span>
       <button class="mic lg" data-coach="vrec" aria-label="${VP.rec ? 'Stop recording' : 'Record yourself'}"${VP.busy ? ' disabled' : ''}>${icon(VP.rec ? 'stop' : 'mic')}</button>
     </div>
-    <p class="vp-hint">${VP.busy ? 'Checking your pronunciation…' : VP.rec ? 'Recording… say the sentence, then tap ■' : 'Listen first, then tap the mic and say the sentence.'}</p>
+    <p class="vp-hint">${VP.busy ? 'Checking your pronunciation…' : VP.rec ? 'Recording… say the sentence, then tap ■' : VP.take ? 'Listen to your recording. Happy with it? Check it, or record again.' : 'Listen first, then tap the mic and say the sentence.'}</p>
+    ${VP.take ? `<div class="take">
+      ${VP.take.url ? `<audio controls preload="metadata" src="${VP.take.url}" aria-label="Your recording"></audio>` : ''}
+      ${vpAzure() ? '' : `<p>We heard: “${esc(VP.take.text) || '…'}”</p>`}
+      <div class="take-act"><button class="btn rp" data-coach="vrec"${VP.busy ? ' disabled' : ''}>${icon('mic')}Re-record</button>
+        <button class="btn primary rp" data-coach="vcheck"${VP.busy ? ' disabled' : ''}>${icon('check')}Check my pronunciation</button></div></div>` : ''}
     ${r ? resultHtml(r) : ''}
     <div class="vp-nav"><button class="btn ghost rp" data-coach="vnav" data-v="-1">Previous</button><button class="btn rp" data-coach="vnav" data-v="1">Next sentence</button></div>
   </div>
@@ -399,7 +463,7 @@ function renderVoice() {
 }
 // Raw recording → 16 kHz mono 16-bit WAV, the format Azure pronunciation assessment expects
 async function startRecording() {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   const mr = new MediaRecorder(stream), chunks = [];
   mr.ondataavailable = e => e.data.size && chunks.push(e.data);
   const done = new Promise(res => (mr.onstop = () => { stream.getTracks().forEach(t => t.stop()); res(new Blob(chunks, { type: mr.mimeType })); }));
@@ -424,31 +488,39 @@ async function toWav16k(blob) {
 }
 const b64 = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
 function finishVp() { if (VP.res?.heard) { logScore('pron', VP.res.score); activity(); } renderVoice(); }
+const vpAzure = () => azureReady() && !!navigator.mediaDevices?.getUserMedia && !!window.MediaRecorder;
+const vpDrop = () => { if (VP.take?.url) URL.revokeObjectURL(VP.take.url); VP.take = null; };
+// Record → listen back → re-record or check. Nothing is scored until you choose "Check".
 async function vpRecord() {
   if (VP.busy) return;
-  if (VP.rec) return VP.rec.stop();
-  const sent = SENTENCES[VP.cat][VP.idx];
-  stopSpeaking(); VP.res = null;
-  if (azureReady() && navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
+  if (VP.rec) return VP.rec.stop?.();
+  stopSpeaking(); vpDrop(); VP.res = null;
+  VP.rec = {}; // placeholder while the mic starts
+  try { VP.rec = await capture({ recognise: !vpAzure() }); } catch (e) { VP.rec = null; toast(e.message); }
+  if (!VP.rec) return renderVoice();
+  renderVoice();
+  const auto = setTimeout(VP.rec.stop, 15000);
+  const take = await VP.rec.done;
+  clearTimeout(auto);
+  VP.rec = null;
+  if (!take.aborted) VP.take = take;
+  renderVoice();
+}
+async function vpCheck() {
+  const take = VP.take, sent = SENTENCES[VP.cat][VP.idx];
+  if (!take || VP.busy) return;
+  if (vpAzure() && take.blob) {
+    VP.busy = true; renderVoice();
     try {
-      const r = await startRecording();
-      VP.rec = r; renderVoice();
-      const auto = setTimeout(r.stop, 15000);
-      const blob = await r.done;
-      clearTimeout(auto);
-      VP.rec = null; VP.busy = true; renderVoice();
-      const out = await api('pronounce', { audio: b64(await toWav16k(blob)), text: sent, lang: voiceLang() });
+      const out = await api('pronounce', { audio: b64(await toWav16k(take.blob)), text: sent, lang: voiceLang() });
       VP.res = out.scores ? { score: clamp100(out.scores.overall), heard: out.heard, scores: out.scores, words: out.words } : { score: 0, heard: '', words: align(sent, '').words };
     } catch (e) { toast(e.message || 'Recording failed'); }
-    VP.rec = null; VP.busy = false;
-    return finishVp();
+    VP.busy = false;
+  } else {
+    const a = align(sent, take.text);
+    VP.res = { score: take.text ? a.score : 0, heard: take.text, words: a.words };
   }
-  let heard = '';
-  VP.rec = listen(voiceLang(), {
-    onText: t => (heard = t),
-    onEnd: () => { VP.rec = null; const a = align(sent, heard); VP.res = { score: heard ? a.score : 0, heard, words: a.words }; finishVp(); },
-  });
-  if (VP.rec) renderVoice();
+  vpDrop(); finishVp();
 }
 
 /* ---------- Australian slang guide ---------- */
@@ -553,11 +625,12 @@ function renderSettings() {
     <div class="field"><span>Voice</span>${seg('voice', [['female', 'Female'], ['male', 'Male']])}</div>
     <div class="field"><span>Speaking speed</span><div class="range-row"><input type="range" min="0.7" max="1.3" step="0.05" data-set="speed" value="${CS.speed}" aria-label="Speaking speed"><output id="speedOut">${Number(CS.speed).toFixed(2)}×</output>
       <button type="button" class="btn rp" data-coach="testvoice">${icon('vol')}Test</button></div></div>
-    <p class="muted">${azureReady() ? 'Using the Azure neural voice.' : dv ? `Using this device's voice: ${esc(dv.name)}.` : `No ${CS.accent === 'australian' ? 'Australian' : 'English'} voice was found on this device, so it will use the default voice.`}</p>
+    <p class="muted">${azureReady() ? 'Using the Azure neural voice.' : dv ? `Using this device's voice: ${esc(dv.name)}.${NATURAL.test(dv.name) ? '' : ' It may sound robotic. For a natural Australian voice, open Lingomate in Microsoft Edge, or connect Azure Speech (it has a free tier).'}` : `No ${CS.accent === 'australian' ? 'Australian' : 'English'} voice was found on this device, so it will use the default voice.`}</p>
   </div>
   <div class="card set-card setup"><h3>AI connection</h3>
     <label class="field"><span>Access code</span><div class="range-row"><input type="password" id="codeIn" value="${esc(CS.accessCode)}" autocomplete="off" aria-label="Access code"><button type="button" class="btn primary rp" data-coach="savecode">Save & check</button></div></label>
     ${statusRow(`AI tutor${ST.provider ? ` (${ST.provider === 'groq' ? 'Groq' : 'Claude'})` : ''}`, lockedOr(ST.ai))}
+    ${statusRow('Accurate speech-to-text (Whisper, uses the Groq key)', lockedOr(ST.transcribe), true)}
     ${statusRow('Australian neural voice (Azure)', lockedOr(ST.voice), true)}
     ${statusRow('Pronunciation scoring (Azure)', lockedOr(ST.pronunciation), true)}
     <details><summary>How to connect (for the site owner)</summary><ol>
@@ -649,6 +722,7 @@ document.addEventListener('click', e => {
     case 'start': startSession(m); break;
     case 'end': endSession(m); break;
     case 'mic': toggleMic(m); break;
+    case 'retake': { const s = SESS[m]; if (s) { s.draft = ''; toggleMic(m); } break; }
     case 'retry': { const s = SESS[m]; if (s) { const text = s.draft; s.error = ''; turn(m, text); } break; }
     case 'sayt': say(d.text); break;
     case 'replay': { const last = SESS.call?.items.filter(i => i.who === 'ai').at(-1); if (last) say(last.text); break; }
@@ -662,9 +736,10 @@ document.addEventListener('click', e => {
       break;
     }
     case 'scenario': callScenario = d.v; renderCall(); break;
-    case 'vtab': VP.tab = d.v; renderVoice(); break;
-    case 'vcat': VP.cat = d.v; VP.idx = 0; VP.res = null; renderVoice(); break;
-    case 'vnav': { const n = SENTENCES[VP.cat].length; VP.idx = (VP.idx + Number(d.v) + n) % n; VP.res = null; renderVoice(); break; }
+    case 'vtab': VP.tab = d.v; vpDrop(); renderVoice(); break;
+    case 'vcat': VP.cat = d.v; VP.idx = 0; VP.res = null; vpDrop(); renderVoice(); break;
+    case 'vnav': { const n = SENTENCES[VP.cat].length; VP.idx = (VP.idx + Number(d.v) + n) % n; VP.res = null; vpDrop(); renderVoice(); break; }
+    case 'vcheck': vpCheck(); break;
     case 'vplay': say(d.text, d.slow ? Math.max(0.6, CS.speed * 0.75) : CS.speed); activity(); break;
     case 'vrec': vpRecord(); break;
     case 'dnext': VP.dIdx++; VP.dRes = null; VP.dTyped = ''; renderVoice(); break;

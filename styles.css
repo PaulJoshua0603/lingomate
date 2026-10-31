@@ -612,6 +612,15 @@ body[data-lib] .region-dd { display: block; }
 .composer textarea { flex: 1; min-height: 44px; max-height: 140px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); font-size: 16px; line-height: 1.4; resize: none; outline: none; field-sizing: content; transition: border-color .2s, box-shadow .2s; }
 .composer textarea:focus { border-color: var(--a1); box-shadow: 0 0 0 3px var(--soft); }
 .composer .send { background: var(--text); color: var(--bg); }
+/* Review a recording before sending: listen back, re-record, fix the words */
+.take { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px; border-top: 1px solid var(--border); background: var(--surface-2); }
+.take p { flex: 1 1 100%; margin: 0; color: var(--muted); font-size: 13.5px; }
+.take audio { flex: 1 1 220px; min-width: 0; height: 40px; }
+.take-act { display: flex; flex-wrap: wrap; gap: 8px; }
+.vp .take, .call .take { margin-top: 10px; border: 0; border-radius: 16px; }
+.call .take { max-width: 520px; margin-inline: auto; text-align: left; }
+.mistakes { display: grid; gap: 8px; margin: 4px 0 0; padding: 0; list-style: none; }
+.mistakes .tag { margin-right: 4px; }
 .chat-err { margin: 0; color: var(--bad); font-size: 14px; }
 .hint-line { margin: 0; padding: 0 14px 12px; color: var(--muted); font-size: 13px; }
 .stepper { list-style: none; display: flex; gap: 6px; margin: 0 0 16px; padding: 2px; overflow-x: auto; scrollbar-width: none; }
