@@ -101,7 +101,7 @@
 <nav class="bottom" id="bottom" aria-label="Quick navigation">
   <a class="nav-link" href="#home" data-view="home"><svg class="i"><use href="#i-home"/></svg><span>Home</span></a>
   <a class="nav-link" href="#talk" data-view="talk"><svg class="i"><use href="#i-chat"/></svg><span>Talk</span></a>
-  <a class="nav-link" href="#checkin" data-view="checkin"><svg class="i"><use href="#i-brief"/></svg><span>Check-in</span></a>
+  <a class="nav-link" href="#dictionary" data-view="dictionary"><svg class="i"><use href="#i-book"/></svg><span>Dictionary</span></a>
   <a class="nav-link" href="#call" data-view="call"><svg class="i"><use href="#i-phone"/></svg><span>Call</span></a>
   <button class="nav-more" id="moreBtn" aria-expanded="false" aria-controls="side"><svg class="i"><use href="#i-menu"/></svg><span>More</span></button>
 </nav>
@@ -218,7 +218,8 @@
     <div class="hero">
       <span class="eyebrow" id="dictCount"></span>
       <h1>Talk like a <em>local.</em></h1>
-      <p class="lead">Everyday words, slang and expressions from the Philippines, the US, Australia and the UK, with meanings, examples and pronunciation.</p>
+      <p class="lead">Everyday words, slang and expressions from the Philippines, the US, Australia and the UK, with meanings, examples, Filipino translations and pronunciation.</p>
+      <div data-voicepick></div>
     </div>
     <div class="search big" id="search">
       <svg class="i"><use href="#i-search"/></svg>
@@ -238,6 +239,7 @@
       <span class="eyebrow">Spaced repetition</span>
       <h1>Flash<em>cards</em></h1>
       <p class="lead">Flip, recall, rate. Words you miss come back sooner; words you know wait longer.</p>
+      <div data-voicepick></div>
     </div>
     <div class="cats" id="decks"></div>
     <div class="stats fc-stats"><span>Due <b id="fcDue">0</b></span><span>New <b id="fcNew">0</b></span><span>Mastered <b id="fcMast">0</b></span></div>
@@ -265,6 +267,7 @@
       <span class="eyebrow">Test yourself</span>
       <h1>Word <em>Quiz</em></h1>
       <p class="lead">Meanings, country swaps and listening drills.</p>
+      <div data-voicepick></div>
     </div>
     <div class="modes" id="modes">
       <button class="chip rp on" data-mode="meaning">Meaning</button>
@@ -279,6 +282,7 @@
         <div class="q-word" id="qWord"></div>
         <button class="mic q-play" id="qPlay" data-act="replay" aria-label="Play the word again" hidden><svg class="i"><use href="#i-vol"/></svg></button>
         <div class="opts" id="opts"></div>
+        <p class="q-fil" id="qFil" hidden></p>
       </div>
     </div>
   </section>

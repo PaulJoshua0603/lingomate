@@ -64,11 +64,14 @@ export function cleanProfile(p = {}) {
     explain: oneOf(p.explain, ['taglish', 'english'], 'taglish'),
     accent: oneOf(p.accent, ['australian', 'british', 'neutral'], 'australian'),
     liveCorrect: p.liveCorrect !== false,
+    // The voice accent (above) and the slang the partner uses are separate, e.g. a British voice with Australian slang
+    slang: oneOf(p.slang, ['australian', 'british', 'none'], 'australian'),
+    tagalog: p.tagalog === true,
     // Notes the browser saved from earlier conversations, so the coach can pick up where they left off
     memory: (Array.isArray(p.memory) ? p.memory : []).slice(-60).map(m => clip(m, 200)).filter(Boolean),
   };
 }
-const nat = p => (p.accent === 'british' ? 'British' : 'Australian');
+const nat = p => (p.slang === 'british' ? 'British' : 'Australian');
 
 function cleanHistory(h) {
   if (!Array.isArray(h)) return [];
@@ -118,16 +121,16 @@ const LEVEL_GUIDE = {
   advanced: 'Speak at full natural speed with idioms and workplace nuance.',
 };
 
-const ACCENT_GUIDE = {
+const SLANG_GUIDE = {
   australian: 'Talk like a real Australian: Australian spelling, contractions and everyday Aussie slang used naturally, one or two expressions per reply at most and only where a real Aussie would, with the meaning clear from context. Draw on: arvo, brekkie, barbie, mate, no worries, she\'ll be right, heaps, reckon, too right, good onya, beaut, ripper, bloke, crook, footy, a dip, togs, thongs, tucker, tea (dinner), bottle-o, my shout, stubby, slab, sticky beak, have a squiz, spewin\', strewth, bloody oath, Woop Woop. Keep it workplace-friendly when you play the manager.',
   british: 'Talk like a real Brit: British spelling, contractions and natural British expressions, one or two per reply at most where they fit (cheers, brilliant, lovely, sorted, knackered, chuffed, gutted, fancy a cuppa, you alright, mate, loo, quid, bits and bobs), while staying easy to understand.',
-  neutral: 'Use clear, neutral international English and avoid heavy slang.',
+  none: 'Use clear, neutral international English and avoid heavy slang.',
 };
 
 function basePrompt(p, mode) {
   return [
     `You are part of Lingomate, a speaking coach for ${p.name}, a Filipino ${p.role} who works with ${nat(p)} colleagues and a ${nat(p)} manager. Their English level is ${p.level}. ${LEVEL_GUIDE[p.level]}`,
-    ACCENT_GUIDE[p.accent],
+    SLANG_GUIDE[p.slang],
     p.memory.length
       ? `Today is ${new Date().toDateString()}. What you remember about ${p.name} from earlier conversations, oldest first:\n${p.memory.map(m => `- ${m}`).join('\n')}\nUse it the way a friend would: follow up on things they mentioned ("How did the audit go?"), connect topics to their interests, and when you open a conversation, pick up on something from before. Never list what you remember or mention keeping notes.`
       : `This is your first conversation with ${p.name}. Get to know their interests, hobbies, daily routine and lifestyle as you chat.`,
@@ -179,7 +182,7 @@ function rolePrompt(mode, p, input) {
     ].join('\n\n');
   }
   return [
-    `Role: you are Jess, a friendly ${p.accent === 'british' ? 'British workmate in London' : 'Australian workmate in Sydney'} who is also helping ${p.name} build confidence in English.`,
+    `Role: you are Jess, a friendly ${p.slang === 'british' ? 'British workmate in London' : 'Australian workmate in Sydney'} who is also helping ${p.name} build confidence in English.`,
     `Topic for this chat: ${TOPICS[input.topic] || TOPICS.daily}.`,
     'Chat like a real colleague: share a little about yourself, react naturally and ask follow-up questions. Now and then use one Australian expression and make its meaning clear from context.',
     'Always set `stage` to 0 and `ended` to false.',
@@ -311,11 +314,15 @@ export async function coachTurn(input) {
     ...cleanHistory(input.history),
   ];
   if (userText) messages.push({ role: 'user', content: userText });
-  const system = [basePrompt(p, mode), rolePrompt(mode, p, input), withFeedback ? feedbackPrompt(p) : ''].filter(Boolean).join('\n\n');
-  const out = await ask({ system, messages, schema: withFeedback ? TURN_FEEDBACK : TURN });
+  const tagalog = p.tagalog ? '`replyTl`: a natural Filipino (Tagalog) translation of `reply`, the way a Filipino would say it, so the learner understands every line.' : '';
+  const system = [basePrompt(p, mode), rolePrompt(mode, p, input), withFeedback ? feedbackPrompt(p) : '', tagalog].filter(Boolean).join('\n\n');
+  let schema = withFeedback ? TURN_FEEDBACK : TURN;
+  if (p.tagalog) schema = { ...schema, required: [...schema.required, 'replyTl'], properties: { ...schema.properties, replyTl: STR } };
+  const out = await ask({ system, messages, schema });
   const fb = out.feedback;
   return {
     reply: clip(out.reply, 1200),
+    replyTl: p.tagalog ? clip(out.replyTl, 1500) : '',
     stage: mode === 'checkin' ? Math.min(8, Math.max(0, Number.parseInt(out.stage, 10) || 0)) : 0,
     ended: mode !== 'daily' && out.ended === true,
     remember: (Array.isArray(out.remember) ? out.remember : []).slice(0, 5).map(r => clip(r, 200)).filter(Boolean),

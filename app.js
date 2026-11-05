@@ -107,8 +107,11 @@ let voices = [];
 if (synth) { const lv = () => (voices = synth.getVoices()); lv(); synth.onvoiceschanged = lv; }
 const locale = code => (code === 'en' || code === 'auto' || !code) ? REGIONS[accent()].locale : code === 'tl' ? 'fil-PH' : code;
 
-function speak(text, lang) {
+// English goes through the coach's voice (coach.js): your chosen accent and gender, Azure when connected.
+// exact = this specific accent was asked for (the US/AU/UK accent buttons).
+function speak(text, lang, exact) {
   if (!text) return;
+  if (/^en/i.test(lang) && window.libraryVoice) return window.libraryVoice(text, lang, exact);
   if (!synth) return toast("Speech isn't supported in this browser");
   synth.cancel();
   const u = new SpeechSynthesisUtterance(text);
@@ -119,6 +122,28 @@ function speak(text, lang) {
   synth.speak(u);
 }
 const playAudio = url => new Audio(url).play().catch(() => toast('Recording unavailable'));
+
+/* ---------- Filipino (Tagalog) translations, cached on this device ---------- */
+const FIL = new Map(Object.entries(store.get('fil', {})));
+const filHtml = (text, cls = 'fil') => (text ? `<span class="${cls}" data-fil="${esc(text)}">${esc(FIL.get(text) || '')}</span>` : '');
+let filTimer = 0;
+// Fills every empty [data-fil] on screen, about 40 lines per request
+function fillFil() {
+  clearTimeout(filTimer);
+  filTimer = setTimeout(async () => {
+    const todo = [...new Set($$('[data-fil]').map(e => e.dataset.fil).filter(t => !FIL.has(t)))];
+    for (let i = 0; i < todo.length; i += 40) {
+      const chunk = todo.slice(i, i + 40);
+      try {
+        const out = (await translate(chunk.join('\n'), 'en', 'tl')).text.split('\n');
+        if (out.length === chunk.length) chunk.forEach((t, j) => FIL.set(t, out[j].trim()));
+        else for (const t of chunk) FIL.set(t, (await translate(t, 'en', 'tl')).text); // lines didn't line up: one at a time
+      } catch { break; } // offline: leave them blank
+    }
+    store.set('fil', Object.fromEntries(FIL));
+    $$('[data-fil]').forEach(e => { if (!e.textContent) e.textContent = FIL.get(e.dataset.fil) || ''; });
+  }, 120);
+}
 
 /* ---------- Voice input (shared) ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -192,6 +217,7 @@ function wCard(x, i) {
       <span class="w-top">${flags(x.rs)}${regionLabel(x)}${m ? '<span class="w-badge">Mastered</span>' : ''}</span>
       <span class="w-word">${esc(x.w)}</span>
       <span class="w-def">${esc(x.def)}</span>
+      ${filHtml(x.def, 'fil w-fil')}
       <span class="w-eq">${eqLine(x)}</span>
     </button>
     <button class="w-save${on ? ' on' : ''}" data-save="${x.key}" aria-pressed="${on}" aria-label="Save ${esc(x.w)}">${icon('bookmark')}</button>
@@ -213,12 +239,13 @@ function renderDict(animate = true) {
   $('#search').classList.toggle('has-q', clear);
   $('#qMic use').setAttribute('href', clear ? '#i-x' : '#i-mic');
   $('#qMic').setAttribute('aria-label', clear ? 'Clear search' : 'Search by voice');
+  fillFil();
 }
 function renderWod() {
   const p = pool(), x = p[(Math.floor(Date.now() / 864e5) * 7919) % p.length], on = isSaved(x.key);
   $('#wod').innerHTML = `
     <div class="wod-l"><span class="wod-tag">Word of the day</span><h2>${esc(x.w)}</h2>
-      <p class="wod-def">${esc(x.def)}</p>${x.ex ? `<p class="wod-ex">“${esc(x.ex)}”</p>` : ''}</div>
+      <p class="wod-def">${esc(x.def)}</p>${filHtml(x.def)}${x.ex ? `<p class="wod-ex">“${esc(x.ex)}”</p>${filHtml(x.ex)}` : ''}</div>
     <div class="wod-r"><span class="w-top">${flags(x.rs)}${regionLabel(x)}</span>
       <div class="wod-act">
         <button class="btn rp" data-say="${esc(x.w)}" data-lang="${sayLang(x)}">${icon('vol')}Hear it</button>
@@ -266,7 +293,7 @@ function markKnown(id) {
 /* ---------- Word detail & full-dictionary sheet ---------- */
 const modal = $('#modal');
 let openSeq = 0, sayRec = null, closeTimer = 0;
-const accentPills = w => RORDER.map(r => `<button class="pill rp" data-say="${esc(w)}" data-lang="${REGIONS[r].locale}">${icon('vol')}${REGIONS[r].short} accent</button>`).join('');
+const accentPills = w => RORDER.map(r => `<button class="pill rp" data-say="${esc(w)}" data-lang="${REGIONS[r].locale}" data-exact="1">${icon('vol')}${REGIONS[r].short} accent</button>`).join('');
 const eqRow = (rs, label, w, id) => `<div class="d-eq">${flags(rs)}<div><small>${label}</small><b>${esc(w)}</b></div>
   <button class="icon-btn sm rp" data-say="${esc(w)}" data-lang="${REGIONS[rs[0]].locale}" aria-label="Hear ${esc(w)}">${icon('vol')}</button>
   ${id != null ? `<button class="link" data-w="${id}">Open</button>` : ''}</div>`;
@@ -290,16 +317,15 @@ function openWord(id) {
       <div class="d-phon" id="dPhon"></div>
       <div class="d-say">${accentPills(x.w)}<span id="dAudio"></span></div>
     </div>
-    <div class="d-sec"><h4>Meaning</h4><p class="d-def">${esc(x.def)}</p>
-      ${x.ex ? `<p class="d-ex">“${esc(x.ex)}” <button class="icon-btn sm rp" data-say="${esc(x.ex)}" data-lang="${sayLang(x)}" aria-label="Hear example">${icon('vol')}</button></p>` : ''}</div>
+    <div class="d-sec"><h4>Meaning</h4><p class="d-def">${esc(x.def)} <button class="icon-btn sm rp" data-say="${esc(x.w)}" data-lang="${sayLang(x)}" aria-label="Hear ${esc(x.w)}">${icon('vol')}</button></p>${filHtml(x.def)}
+      ${x.ex ? `<p class="d-ex">“${esc(x.ex)}” <button class="icon-btn sm rp" data-say="${esc(x.ex)}" data-lang="${sayLang(x)}" aria-label="Hear example">${icon('vol')}</button></p>${filHtml(x.ex)}` : ''}</div>
     ${elsewhere}
-    <div class="d-sec"><h4>In Filipino</h4><p class="d-fil" id="dFil">…</p></div>
     <div class="d-practice"><button class="btn rp" data-act="say-check" data-id="${x.id}">${icon('mic')}Say it</button><span class="d-res" id="dRes">Practise your pronunciation</span></div>
     <div class="d-actions">
       <button class="btn rp${on ? ' on' : ''}" data-save="${x.key}" aria-pressed="${on}">${icon('bookmark')}<span>${on ? 'Saved' : 'Save word'}</span></button>
       <button class="btn primary rp" data-act="known" data-id="${x.id}">${icon('check')}I know this</button>
     </div>`);
-  translate(x.def, 'en', 'tl').then(r => tok === openSeq && ($('#dFil').textContent = r.text), () => tok === openSeq && ($('#dFil').textContent = 'Unavailable offline'));
+  fillFil();
   if (/^[a-z'-]+$/i.test(x.w)) fetchDict(x.w).then(d => {
     if (!d || tok !== openSeq) return;
     const ph = pickPhon(d), au = pickAudio(d, x.rs[0]);
@@ -392,8 +418,10 @@ function showCard() {
   fc.style.setProperty('--rc', `var(--${x.rs[0]})`);
   $('#fcFront').innerHTML = `<span class="w-top">${flags(x.rs)}${regionLabel(x)}</span><div class="fc-word">${esc(x.w)}</div>
     <button class="icon-btn rp" data-say="${esc(x.w)}" data-lang="${sayLang(x)}" aria-label="Hear it">${icon('vol')}</button><span class="fc-hint">Tap to flip</span>`;
-  $('#fcBack').innerHTML = `<span class="w-top">${flags(x.rs)}${esc(x.w)}</span><p class="fc-def">${esc(x.def)}</p>
-    ${x.ex ? `<p class="fc-ex">“${esc(x.ex)}”</p>` : ''}<span class="w-eq">${eqLine(x)}</span>`;
+  const hear = (t, label) => `<button class="icon-btn sm rp" data-say="${esc(t)}" data-lang="${sayLang(x)}" aria-label="${label}">${icon('vol')}</button>`;
+  $('#fcBack').innerHTML = `<span class="w-top">${flags(x.rs)}${esc(x.w)} ${hear(x.w, `Hear ${esc(x.w)}`)}</span><p class="fc-def">${esc(x.def)}</p>${filHtml(x.def)}
+    ${x.ex ? `<p class="fc-ex">“${esc(x.ex)}” ${hear(x.ex, 'Hear example')}</p>${filHtml(x.ex)}` : ''}<span class="w-eq">${eqLine(x)}</span>`;
+  fillFil();
   $('#rGood').textContent = gapLabel(nextBox(x, 1));
   $('#rEasy').textContent = gapLabel(nextBox(x, 2));
   restart($('#scene'), 'enter');
@@ -453,6 +481,7 @@ function nextQ() {
   $('#qPlay').hidden = !q.listen;
   $('#opts').className = 'opts' + (q.long ? ' long' : '');
   $('#opts').innerHTML = q.opts.map(o => `<button class="opt rp" data-opt="${esc(o)}">${esc(o)}</button>`).join('');
+  $('#qFil').hidden = true;
   if (q.listen) setTimeout(() => quiz.q === q && $('#v-quiz').classList.contains('active') && speak(...q.say), 400);
 }
 function answer(btn) {
@@ -465,11 +494,15 @@ function answer(btn) {
     quiz.score++; quiz.streak++; studied();
     if (quiz.streak > quiz.best) { quiz.best = quiz.streak; store.set('qbest', quiz.best); }
     confetti(btn);
-    speak(...q.say);
   } else { btn.classList.add('wrong'); quiz.streak = 0; }
+  // Always play the right answer and show what it means in Filipino
+  speak(...q.say);
+  $('#qFil').innerHTML = `<button class="icon-btn sm rp" data-say="${esc(q.say[0])}" data-lang="${q.say[1]}" aria-label="Hear it again">${icon('vol')}</button><b>${esc(q.say[0])}</b> ${filHtml(q.x.def)}`;
+  $('#qFil').hidden = false;
+  fillFil();
   $('#qWord').hidden = false;
   renderQStats();
-  quiz.timer = setTimeout(nextQ, ok ? 1300 : 2200);
+  quiz.timer = setTimeout(nextQ, ok ? 2600 : 4000);
 }
 function setMode(mode) {
   quiz.mode = mode; clearTimeout(quiz.timer);
@@ -746,7 +779,7 @@ document.addEventListener('click', e => {
   if (!t) return;
   const d = t.dataset;
   if (d.region) setFocus(d.region);
-  else if (d.say !== undefined) speak(d.say, d.lang);
+  else if (d.say !== undefined) speak(d.say, d.lang, !!d.exact);
   else if (d.audio) playAudio(d.audio);
   else if (d.phrase) usePhrase(d.phrase);
   else if (d.load) { const [k, i] = d.load.split(':'); loadEntry(S[k][+i]); }

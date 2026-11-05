@@ -753,6 +753,16 @@ body[data-lib] .region-dd { display: block; }
 .seg { display: inline-flex; flex-wrap: wrap; gap: 4px; justify-self: start; padding: 4px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
 .seg-b { padding: 7px 14px; border-radius: 9px; font-size: 14px; font-weight: 500; color: var(--muted); transition: background-color .2s, color .2s; }
 .seg-b.on { background: var(--seg); color: var(--text); box-shadow: 0 1px 3px rgba(30, 27, 23, .12); }
+/* Quick voice switch (call, dictionary, flashcards, quiz) */
+.voice-pick { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 12px 0; }
+.voice-pick > .i { color: var(--muted); }
+.hero .voice-pick { justify-content: flex-start; margin-bottom: 0; }
+/* Filipino (Tagalog) translations */
+.fil { display: block; margin-top: 4px; color: var(--muted); font-size: .9em; font-style: normal; font-weight: 400; }
+.fil:not(:empty)::before { content: 'FIL '; color: var(--a1); font-size: .78em; font-weight: 700; letter-spacing: .06em; }
+.no-fil .fil { display: none; }
+.q-fil { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 8px; margin: 14px 0 0; }
+.q-fil .fil { flex-basis: 100%; text-align: center; }
 .chks { display: flex; flex-wrap: wrap; gap: 8px; }
 .chk { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 99px; font-size: 14px; cursor: pointer; }
 .chk input, .range-row input[type=range] { accent-color: var(--a1); }

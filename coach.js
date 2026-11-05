@@ -4,14 +4,16 @@
 
 /* ---------- Settings & progress (saved in this browser) ---------- */
 const COACH_DEFAULTS = {
-  name: '', role: 'HR Admin', manager: 'Sarah', accent: 'australian', level: 'intermediate', speed: 1,
+  name: '', role: 'HR Admin', manager: 'Sarah', accent: 'british', level: 'intermediate', speed: 1,
   correction: 'after', explain: 'taglish', topics: TOPICS.map(t => t.id), duration: 15, voice: 'female', accessCode: '',
-  live: 'on', remember: 'on',
+  live: 'on', remember: 'on', slang: 'australian', tagalog: 'on', wordVoice: 'mine',
 };
 const CS = { ...COACH_DEFAULTS, ...store.get('coach-settings', {}) };
 const saveCS = () => store.set('coach-settings', CS);
 // Topics added after a learner first saved their settings are switched on for them too
 if (!CS.topicsV2) { CS.topics = [...new Set([...CS.topics, 'life', 'scenarios', 'advice'])]; CS.topicsV2 = true; saveCS(); }
+// The owner's preferred voice: British female with Australian slang (applied once; change any time in Settings)
+if (!CS.prefsV3) { Object.assign(CS, { accent: 'british', voice: 'female', slang: 'australian', prefsV3: true }); saveCS(); }
 const CP = { days: {}, sessions: [], grammar: [], pron: [], confidence: [], vocab: {}, recent: [], memory: [], goals: { days: 5, convos: 5 }, ...store.get('coach-progress', {}) };
 function saveCP() {
   CP.days = Object.fromEntries(Object.keys(CP.days).sort().slice(-120).map(k => [k, CP.days[k]]));
@@ -26,7 +28,7 @@ const weekDays = () => {
   const now = new Date(), monday = now.getDate() - ((now.getDay() + 6) % 7);
   return Array.from({ length: 7 }, (_, i) => new Date(now.getFullYear(), now.getMonth(), monday + i));
 };
-const profile = () => ({ name: CS.name, role: CS.role, manager: CS.manager, level: CS.level, explain: CS.explain, accent: CS.accent, liveCorrect: CS.live !== 'off', memory: memoryNotes() });
+const profile = () => ({ name: CS.name, role: CS.role, manager: CS.manager, level: CS.level, explain: CS.explain, accent: CS.accent, slang: CS.slang, tagalog: CS.tagalog !== 'off', liveCorrect: CS.live !== 'off', memory: memoryNotes() });
 
 /* ---------- Memory: what the coach remembers about you between sessions ---------- */
 const memDate = t => new Date(t).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
@@ -89,31 +91,40 @@ function bannerHtml() {
 /* ---------- Voice output ---------- */
 let speaking = false, audioEl = null, sayTok = 0;
 const voiceLang = () => ({ australian: 'en-AU', british: 'en-GB' })[CS.accent] || 'en-US';
-const nick = () => (CS.accent === 'british' ? 'British' : 'Aussie');
+const nick = () => (CS.slang === 'british' ? 'British' : 'Aussie');
+// Quick voice switch shown on the call, dictionary, flashcard and quiz screens (same settings as Settings → Voice)
+const voicePick = (tl = false) => `<div class="voice-pick">${icon('vol')}${seg('voice', [['female', 'Female'], ['male', 'Male']])}${seg('accent', [['british', 'British'], ['australian', 'Australian'], ['neutral', 'US']])}${tl ? seg('tagalog', [['on', 'Tagalog'], ['off', 'English only']]) : ''}</div>`;
+const renderVoicePicks = () => $$('[data-voicepick]').forEach(el => (el.innerHTML = voicePick()));
+// The word library (app.js) speaks through here: your voice by default, or each word's own country accent
+window.libraryVoice = (text, lang, exact) => say(text, CS.speed, exact || CS.wordVoice === 'country' ? lang : voiceLang());
+const filLine = t => (t && CS.tagalog !== 'off' ? `<small class="fil">${esc(t)}</small>` : '');
 const FEMALE = /natasha|karen|catherine|annette|carly|freya|tina|elsie|kim|joanne|female|samantha|jenny|aria|zira|ava|allison|libby|sonia|maisie|hazel|susan|serena|kate|martha|stephanie/i;
 const MALE = /william|lee|james|duncan|ken|tim|neil|darren|\bmale\b|guy|david|mark|daniel|alex|fred|ryan|thomas|george|oliver|arthur|rory/i;
 const NATURAL = /natural|online|premium|enhanced/i;
-function deviceVoice() {
-  const L = voiceLang().toLowerCase(), want = CS.voice === 'male' ? MALE : FEMALE;
-  const list = voices.filter(v => v.lang.toLowerCase().replace('_', '-') === L);
-  // A natural (neural) voice of either gender sounds far more human than a robotic one of the chosen gender
-  return list.find(v => want.test(v.name) && NATURAL.test(v.name)) || list.find(v => NATURAL.test(v.name)) || list.find(v => want.test(v.name)) || list[0] || null;
+function deviceVoice(lang = voiceLang()) {
+  const want = CS.voice === 'male' ? MALE : FEMALE;
+  const of = l => voices.filter(v => v.lang.toLowerCase().replace('_', '-') === l.toLowerCase());
+  const list = of(lang).length ? of(lang) : of(voiceLang());
+  // Your chosen gender first, then natural (neural) voices, then Google's over older built-in ones
+  const rank = v => (want.test(v.name) ? 4 : 0) + (NATURAL.test(v.name) ? 2 : 0) + (/google/i.test(v.name) ? 1 : 0);
+  return list.sort((a, b) => rank(b) - rank(a))[0] || null;
 }
+const AZURE_ACCENT = { 'en-AU': 'au', 'en-GB': 'gb', 'en-US': 'neutral' };
 // Dashes, brackets, ellipses and emoji make voices pause awkwardly or read symbols aloud
 const speakable = t => String(t).replace(/\p{Extended_Pictographic}/gu, '').replace(/\s*(?:[—–;…]|\.{3}|\s-\s)\s*/g, ', ')
   .replace(/[()[\]{}"*_#~]/g, '').replace(/\s+([,.!?])/g, '$1').replace(/([,.!?]),+/g, '$1').replace(/\s{2,}/g, ' ').trim();
 function setSpeaking(on) { speaking = on; if (SESS.call && !SESS.call.summary && currentView() === 'call') renderCall(); }
 function stopSpeaking() { sayTok++; synth?.cancel(); audioEl?.pause(); audioEl = null; if (speaking) setSpeaking(false); }
-async function say(text, rate = CS.speed) {
+async function say(text, rate = CS.speed, lang = voiceLang()) {
   stopSpeaking();
   text = speakable(text || '');
   if (!text) return;
   const tok = sayTok;
   setSpeaking(true);
   try {
-    if (azureReady()) {
+    if (azureReady() && AZURE_ACCENT[lang]) {
       try {
-        const blob = await api('tts', { text, rate, voice: `${({ australian: 'au', british: 'gb' })[CS.accent] || 'neutral'}-${CS.voice}` });
+        const blob = await api('tts', { text, rate, voice: `${AZURE_ACCENT[lang]}-${CS.voice}` });
         if (tok !== sayTok) return;
         const url = URL.createObjectURL(blob);
         audioEl = new Audio(url);
@@ -122,14 +133,14 @@ async function say(text, rate = CS.speed) {
         return;
       } catch { /* fall back to the device voice */ }
     }
-    if (tok === sayTok) await deviceSay(text, rate);
+    if (tok === sayTok) await deviceSay(text, rate, lang);
   } finally { if (tok === sayTok) setSpeaking(false); }
 }
-function deviceSay(text, rate) {
+function deviceSay(text, rate, lang) {
   return new Promise(res => {
     if (!synth) return res();
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = voiceLang(); u.voice = deviceVoice(); u.rate = rate;
+    u.voice = deviceVoice(lang); u.lang = u.voice?.lang || lang; u.rate = rate;
     const timer = setTimeout(res, 3000 + (text.length * 110) / rate); // Safari sometimes never fires onend
     u.onend = u.onerror = () => { clearTimeout(timer); res(); };
     synth.speak(u);
@@ -212,7 +223,7 @@ async function turn(mode, userText = '') {
       saveCP();
     }
     if (CS.remember !== 'off' && out.remember?.length) remember(out.remember);
-    s.items.push({ who: 'ai', text: out.reply });
+    s.items.push({ who: 'ai', text: out.reply, tl: out.replyTl });
     s.stage = Math.max(s.stage, out.stage);
     s.ended = out.ended;
   } catch (e) {
@@ -302,7 +313,7 @@ function fbHtml(fb, open) {
 function msgsHtml(s, who) {
   const lastFb = s.items.map(i => !!i.fb).lastIndexOf(true);
   return s.items.map((it, i) => (it.who === 'ai'
-    ? `<div class="msg ai"><span class="av">${who.initial}</span><div class="bubble">${esc(it.text)} ${sayBtn(it.text, 'Hear it again')}</div></div>`
+    ? `<div class="msg ai"><span class="av">${who.initial}</span><div class="bubble">${esc(it.text)} ${sayBtn(it.text, 'Hear it again')}${filLine(it.tl)}</div></div>`
     : `<div class="msg me"><div class="bubble">${esc(it.text)}</div></div>${it.fb ? fbHtml(it.fb, i === lastFb) : ''}`)).join('');
 }
 function reviewHtml(r) {
@@ -372,6 +383,7 @@ function renderCall() {
   if (!s) {
     box.innerHTML = `<div class="card call-setup"><span class="av xl">${who.initial}</span><h3>${esc(who.name)}</h3><p class="muted">Your Australian manager</p>
       <h4>What's the call about?</h4><div class="chips">${SCENARIOS.map(x => `<button class="chip rp${callScenario === x.id ? ' on' : ''}" data-coach="scenario" data-v="${x.id}">${x.label}</button>`).join('')}</div>
+      <h4>Voice</h4>${voicePick(true)}
       <button class="btn call-go rp" data-coach="start" data-m="call"${aiReady() ? '' : ' disabled'}>${icon('phone')}Start call</button></div>`;
     return;
   }
@@ -389,8 +401,9 @@ function renderCall() {
       <button class="ctl end" data-coach="end" data-m="call" aria-label="End call">${icon('phone')}<span>End</span></button></div>
     ${s.take ? takeHtml(s.take, 'call') : ''}
     <form class="composer call-type" data-m="call"><textarea rows="1" aria-label="Type your answer" placeholder="Or type your answer"${hold ? ' disabled' : ''}></textarea><button class="mic sm send" aria-label="Send"${hold ? ' disabled' : ''}>${icon('send')}</button></form>`}
-    <details class="transcript"${s.summary ? ' open' : ''}><summary>Transcript</summary>
-      ${s.items.map(it => `<p class="tl"><b>${it.who === 'ai' ? esc(who.name) : 'You'}:</b> ${esc(it.text)}</p>`).join('')}</details>
+    ${s.summary ? '' : voicePick(true)}
+    <details class="transcript"${s.summary || CS.tagalog !== 'off' ? ' open' : ''}><summary>Transcript${CS.tagalog !== 'off' ? ' · with Tagalog' : ''}</summary>
+      ${s.items.map(it => `<p class="tl"><b>${it.who === 'ai' ? esc(who.name) : 'You'}:</b> ${esc(it.text)}${it.who === 'ai' ? ` ${sayBtn(it.text, 'Hear it again')}${filLine(it.tl)}` : ''}</p>`).join('')}</details>
   </div>${s.summary ? summaryCard('call', s) : ''}`;
   const ta = $('textarea', box);
   if (ta) ta.value = s.draft || '';
@@ -570,8 +583,6 @@ function renderHome() {
   $('#homeExp').innerHTML = `<span class="wod-tag">Expression of the day</span><h2>${esc(x.t)} ${sayBtn(x.t)}</h2><p class="say">${esc(x.say)}</p><p>${esc(x.en)}</p><p class="muted"><b>FIL</b> ${esc(x.fil)}</p>`;
   $('#modules').innerHTML = [
     ['talk', 'chat', 'Daily Conversation', 'Chat with Jess, your Aussie workmate'],
-    ['checkin', 'brief', 'HR Weekly Check-in', `Practise your one-on-one with ${CS.manager}`],
-    ['call', 'phone', 'Live Call Simulation', 'A surprise call from your manager'],
     ['voice', 'mic', 'Voice Practice', 'Repeat, record and train your ear'],
     ['slang', 'quote', 'Australian Slang', 'Expressions, culture and when to use them'],
     ['progress', 'chart', 'Progress Tracker', 'Grammar, pronunciation and weekly goals'],
@@ -631,13 +642,16 @@ function renderSettings() {
   <div class="card set-card"><h3>Learning</h3>
     <div class="field"><span>English level</span>${seg('level', [['beginner', 'Beginner'], ['intermediate', 'Intermediate'], ['advanced', 'Advanced']])}</div>
     <div class="field"><span>Explanations</span>${seg('explain', [['taglish', 'Taglish'], ['english', 'English only']])}</div>
+    <div class="field"><span>Filipino (Tagalog) translations</span>${seg('tagalog', [['on', 'Show'], ['off', 'Hide']])}<small class="muted">Under every conversation line, word, slang expression and example.</small></div>
     <div class="field"><span>When to show corrections</span>${seg('correction', [['after', 'After each answer'], ['end', 'At the end of the session']])}<small class="muted">Live calls always save feedback for the end, so nothing interrupts you.</small></div>
     <div class="field"><span>Correct me during the conversation</span>${seg('live', [['on', 'On'], ['off', 'Off']])}<small class="muted">Your partner gently fixes one mistake as you talk, like a friend would, then carries on. Manager calls stay realistic and skip this.</small></div>
     <div class="field"><span>Daily practice goal</span>${seg('duration', [[5, '5 min'], [10, '10 min'], [15, '15 min'], [20, '20 min'], [30, '30 min']])}</div>
     <div class="field"><span>Conversation topics</span><div class="chks">${TOPICS.map(t => `<label class="chk"><input type="checkbox" data-topic="${t.id}"${CS.topics.includes(t.id) ? ' checked' : ''}>${t.label}</label>`).join('')}</div></div>
   </div>
   <div class="card set-card"><h3>Voice</h3>
-    <div class="field"><span>Accent</span>${seg('accent', [['australian', 'Australian'], ['british', 'British'], ['neutral', 'Neutral']])}</div>
+    <div class="field"><span>Voice accent</span>${seg('accent', [['british', 'British'], ['australian', 'Australian'], ['neutral', 'US']])}</div>
+    <div class="field"><span>Slang & expressions</span>${seg('slang', [['australian', 'Australian'], ['british', 'British'], ['none', 'None']])}<small class="muted">Mix and match, for example a British voice that uses Australian slang.</small></div>
+    <div class="field"><span>Dictionary, flashcard & quiz words</span>${seg('wordVoice', [['mine', 'Use my voice'], ['country', "Each word's own accent"]])}</div>
     <div class="field"><span>Voice</span>${seg('voice', [['female', 'Female'], ['male', 'Male']])}</div>
     <div class="field"><span>Speaking speed</span><div class="range-row"><input type="range" min="0.7" max="1.3" step="0.05" data-set="speed" value="${CS.speed}" aria-label="Speaking speed"><output id="speedOut">${Number(CS.speed).toFixed(2)}×</output>
       <button type="button" class="btn rp" data-coach="testvoice">${icon('vol')}Test</button></div></div>
@@ -732,7 +746,10 @@ document.addEventListener('click', e => {
   if (set && set.tagName === 'BUTTON') {
     const k = set.dataset.set;
     CS[k] = k === 'duration' ? Number(set.dataset.v) : set.dataset.v;
-    saveCS(); renderSettings();
+    saveCS(); renderSettings(); renderVoicePicks();
+    document.documentElement.classList.toggle('no-fil', CS.tagalog === 'off');
+    if (['call', 'talk', 'checkin'].includes(currentView())) coachRoute(currentView());
+    if (k === 'voice' || k === 'accent') say(CS.voice === 'male' ? 'This is my voice now.' : "Hi, this is how I'll sound.");
     return;
   }
   if (e.target.closest('.nav-link')) toggleSide(false);
@@ -774,7 +791,7 @@ document.addEventListener('click', e => {
       break;
     }
     case 'goal': { const [k, delta] = d.v.split(':'); CP.goals[k] = Math.min(7 * (k === 'convos' ? 3 : 1), Math.max(1, CP.goals[k] + Number(delta))); saveCP(); renderProgress(); break; }
-    case 'testvoice': { const n = CS.name ? ` ${CS.name}` : ''; say(CS.accent === 'british' ? `Hiya${n}! You alright? This is how I'll sound.` : `G'day${n}! How are you going? This is how I'll sound.`); break; }
+    case 'testvoice': { const n = CS.name ? ` ${CS.name}` : ''; say(CS.slang === 'british' ? `Hiya${n}! You alright? This is how I'll sound.` : `G'day${n}! How are you going? This is how I'll sound.`); break; }
     case 'forget': CP.memory.splice(+d.v, 1); saveCP(); renderSettings(); break;
     case 'forgetall': if (confirm('Forget everything your coach remembers about you?')) { CP.memory = []; saveCP(); renderSettings(); } break;
     case 'savecode': CS.accessCode = $('#codeIn').value.trim(); saveCS(); toast('Checking…'); checkStatus().then(() => toast(aiReady() ? 'Connected! The AI tutor is ready.' : ST.ai ? 'That access code is not right.' : 'Saved. The server is not set up yet.')); break;
@@ -782,5 +799,7 @@ document.addEventListener('click', e => {
 });
 
 /* ---------- Init ---------- */
+document.documentElement.classList.toggle('no-fil', CS.tagalog === 'off');
+renderVoicePicks();
 coachRoute(currentView());
 checkStatus();
