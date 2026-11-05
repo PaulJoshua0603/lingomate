@@ -6,10 +6,13 @@
 const COACH_DEFAULTS = {
   name: '', role: 'HR Admin', manager: 'Sarah', accent: 'australian', level: 'intermediate', speed: 1,
   correction: 'after', explain: 'taglish', topics: TOPICS.map(t => t.id), duration: 15, voice: 'female', accessCode: '',
+  live: 'on', remember: 'on',
 };
 const CS = { ...COACH_DEFAULTS, ...store.get('coach-settings', {}) };
 const saveCS = () => store.set('coach-settings', CS);
-const CP = { days: {}, sessions: [], grammar: [], pron: [], confidence: [], vocab: {}, recent: [], goals: { days: 5, convos: 5 }, ...store.get('coach-progress', {}) };
+// Topics added after a learner first saved their settings are switched on for them too
+if (!CS.topicsV2) { CS.topics = [...new Set([...CS.topics, 'life', 'scenarios', 'advice'])]; CS.topicsV2 = true; saveCS(); }
+const CP = { days: {}, sessions: [], grammar: [], pron: [], confidence: [], vocab: {}, recent: [], memory: [], goals: { days: 5, convos: 5 }, ...store.get('coach-progress', {}) };
 function saveCP() {
   CP.days = Object.fromEntries(Object.keys(CP.days).sort().slice(-120).map(k => [k, CP.days[k]]));
   ['sessions', 'grammar', 'pron', 'confidence'].forEach(k => (CP[k] = CP[k].slice(-300)));
@@ -23,7 +26,17 @@ const weekDays = () => {
   const now = new Date(), monday = now.getDate() - ((now.getDay() + 6) % 7);
   return Array.from({ length: 7 }, (_, i) => new Date(now.getFullYear(), now.getMonth(), monday + i));
 };
-const profile = () => ({ name: CS.name, role: CS.role, manager: CS.manager, level: CS.level, explain: CS.explain, accent: CS.accent });
+const profile = () => ({ name: CS.name, role: CS.role, manager: CS.manager, level: CS.level, explain: CS.explain, accent: CS.accent, liveCorrect: CS.live !== 'off', memory: memoryNotes() });
+
+/* ---------- Memory: what the coach remembers about you between sessions ---------- */
+const memDate = t => new Date(t).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+const memoryNotes = () => (CS.remember === 'off' ? [] : CP.memory.slice(-60).map(m => `(${memDate(m.t)}) ${m.text}`));
+function remember(notes = []) {
+  const known = new Set(CP.memory.map(m => norm(m.text)));
+  for (const text of notes) if (text && !known.has(norm(text))) { CP.memory.push({ text, t: Date.now() }); known.add(norm(text)); }
+  CP.memory = CP.memory.slice(-60);
+  saveCP();
+}
 
 let lastAct = 0;
 // Practice time: gaps under 2 minutes between actions count as practice
@@ -75,9 +88,10 @@ function bannerHtml() {
 
 /* ---------- Voice output ---------- */
 let speaking = false, audioEl = null, sayTok = 0;
-const voiceLang = () => (CS.accent === 'australian' ? 'en-AU' : 'en-US');
-const FEMALE = /natasha|karen|catherine|annette|carly|freya|tina|elsie|kim|joanne|female|samantha|jenny|aria|zira|ava|allison|libby|sonia/i;
-const MALE = /william|lee|james|duncan|ken|tim|neil|darren|male|guy|david|mark|daniel|alex|fred|ryan|thomas/i;
+const voiceLang = () => ({ australian: 'en-AU', british: 'en-GB' })[CS.accent] || 'en-US';
+const nick = () => (CS.accent === 'british' ? 'British' : 'Aussie');
+const FEMALE = /natasha|karen|catherine|annette|carly|freya|tina|elsie|kim|joanne|female|samantha|jenny|aria|zira|ava|allison|libby|sonia|maisie|hazel|susan|serena|kate|martha|stephanie/i;
+const MALE = /william|lee|james|duncan|ken|tim|neil|darren|\bmale\b|guy|david|mark|daniel|alex|fred|ryan|thomas|george|oliver|arthur|rory/i;
 const NATURAL = /natural|online|premium|enhanced/i;
 function deviceVoice() {
   const L = voiceLang().toLowerCase(), want = CS.voice === 'male' ? MALE : FEMALE;
@@ -99,7 +113,7 @@ async function say(text, rate = CS.speed) {
   try {
     if (azureReady()) {
       try {
-        const blob = await api('tts', { text, rate, voice: `${CS.accent === 'australian' ? 'au' : 'neutral'}-${CS.voice}` });
+        const blob = await api('tts', { text, rate, voice: `${({ australian: 'au', british: 'gb' })[CS.accent] || 'neutral'}-${CS.voice}` });
         if (tok !== sayTok) return;
         const url = URL.createObjectURL(blob);
         audioEl = new Audio(url);
@@ -160,7 +174,7 @@ const currentView = () => { const h = location.hash.slice(1); return VIEWS.inclu
 function persona(mode) {
   if (mode === 'daily') {
     const topic = TOPICS.find(t => t.id === talkTopic)?.label || 'Daily conversation';
-    return { name: 'Jess', initial: 'J', sub: 'Aussie workmate', title: 'Jess · your Aussie workmate', blurb: `Topic: ${topic}. Jess starts the chat; answer by voice or by typing.`, cta: 'Start chatting' };
+    return { name: 'Jess', initial: 'J', sub: `${nick()} workmate`, title: `Jess · your ${nick()} workmate`, blurb: `Topic: ${topic}. Jess starts the chat; answer by voice or by typing.`, cta: 'Start chatting' };
   }
   const m = CS.manager || 'Sarah';
   return mode === 'checkin'
@@ -197,6 +211,7 @@ async function turn(mode, userText = '') {
       if (norm(fb.corrected) !== norm(fb.original)) CP.recent.push(fb);
       saveCP();
     }
+    if (CS.remember !== 'off' && out.remember?.length) remember(out.remember);
     s.items.push({ who: 'ai', text: out.reply });
     s.stage = Math.max(s.stage, out.stage);
     s.ended = out.ended;
@@ -278,7 +293,7 @@ function fbHtml(fb, open) {
       <dt>You said</dt><dd>${esc(fb.original)}</dd>
       ${ok ? '' : `<dt>Corrected</dt><dd><b>${esc(fb.corrected)}</b> ${sayBtn(fb.corrected)}</dd>`}
       ${list.length ? `<dt>What to improve</dt><dd><ul class="mistakes">${list.map(x => `<li><span class="tag">${esc(MISTAKE_TYPES[x.type] || x.type)}</span> <s>${esc(x.wrong)}</s> → <b>${esc(x.right)}</b><br><span class="muted">${esc(x.why)}</span></li>`).join('')}</ul></dd>` : ''}
-      ${better ? `<dt>${ok ? 'Even more natural (Aussie)' : 'More natural (Aussie)'}</dt><dd><b>${esc(fb.natural)}</b> ${sayBtn(fb.natural)}</dd>` : ''}
+      ${better ? `<dt>${ok ? 'Even more natural' : 'More natural'} (${nick()})</dt><dd><b>${esc(fb.natural)}</b> ${sayBtn(fb.natural)}</dd>` : ''}
       <dt>${ok ? 'Tip' : CS.explain === 'taglish' ? 'Bakit? (Why)' : 'Why'}</dt><dd>${esc(fb.explanation)}</dd>
       ${fb.vocabulary.length ? `<dt>Useful words</dt><dd class="vchips">${fb.vocabulary.map(v => `<span class="vchip"><b>${esc(v.term)}</b> ${esc(v.meaning)}</span>`).join('')}</dd>` : ''}
       <dt>Next question</dt><dd>${esc(fb.followUp)}</dd>
@@ -617,15 +632,21 @@ function renderSettings() {
     <div class="field"><span>English level</span>${seg('level', [['beginner', 'Beginner'], ['intermediate', 'Intermediate'], ['advanced', 'Advanced']])}</div>
     <div class="field"><span>Explanations</span>${seg('explain', [['taglish', 'Taglish'], ['english', 'English only']])}</div>
     <div class="field"><span>When to show corrections</span>${seg('correction', [['after', 'After each answer'], ['end', 'At the end of the session']])}<small class="muted">Live calls always save feedback for the end, so nothing interrupts you.</small></div>
+    <div class="field"><span>Correct me during the conversation</span>${seg('live', [['on', 'On'], ['off', 'Off']])}<small class="muted">Your partner gently fixes one mistake as you talk, like a friend would, then carries on. Manager calls stay realistic and skip this.</small></div>
     <div class="field"><span>Daily practice goal</span>${seg('duration', [[5, '5 min'], [10, '10 min'], [15, '15 min'], [20, '20 min'], [30, '30 min']])}</div>
     <div class="field"><span>Conversation topics</span><div class="chks">${TOPICS.map(t => `<label class="chk"><input type="checkbox" data-topic="${t.id}"${CS.topics.includes(t.id) ? ' checked' : ''}>${t.label}</label>`).join('')}</div></div>
   </div>
   <div class="card set-card"><h3>Voice</h3>
-    <div class="field"><span>Accent</span>${seg('accent', [['australian', 'Australian'], ['neutral', 'Neutral']])}</div>
+    <div class="field"><span>Accent</span>${seg('accent', [['australian', 'Australian'], ['british', 'British'], ['neutral', 'Neutral']])}</div>
     <div class="field"><span>Voice</span>${seg('voice', [['female', 'Female'], ['male', 'Male']])}</div>
     <div class="field"><span>Speaking speed</span><div class="range-row"><input type="range" min="0.7" max="1.3" step="0.05" data-set="speed" value="${CS.speed}" aria-label="Speaking speed"><output id="speedOut">${Number(CS.speed).toFixed(2)}×</output>
       <button type="button" class="btn rp" data-coach="testvoice">${icon('vol')}Test</button></div></div>
     <p class="muted">${azureReady() ? 'Using the Azure neural voice.' : dv ? `Using this device's voice: ${esc(dv.name)}.${NATURAL.test(dv.name) ? '' : ' It may sound robotic. For a natural Australian voice, open Lingomate in Microsoft Edge, or connect Azure Speech (it has a free tier).'}` : `No ${CS.accent === 'australian' ? 'Australian' : 'English'} voice was found on this device, so it will use the default voice.`}</p>
+  </div>
+  <div class="card set-card"><h3>Memory</h3>
+    <div class="field"><span>Remember our conversations</span>${seg('remember', [['on', 'On'], ['off', 'Off']])}<small class="muted">Your coach remembers what you share (interests, routine, plans) and picks up where you left off. Saved on this device and sent to the AI with each message.</small></div>
+    ${CP.memory.length ? `<ul class="mem">${CP.memory.map((m, i) => `<li><span>${esc(m.text)} <small class="muted">${memDate(m.t)}</small></span><button type="button" class="icon-btn sm rp" data-coach="forget" data-v="${i}" aria-label="Forget this">${icon('x')}</button></li>`).reverse().join('')}</ul>
+      <button type="button" class="btn rp" data-coach="forgetall">Forget everything</button>` : '<p class="muted">Nothing remembered yet. Tell Jess about your day, your hobbies or your plans.</p>'}
   </div>
   <div class="card set-card setup"><h3>AI connection</h3>
     <label class="field"><span>Access code</span><div class="range-row"><input type="password" id="codeIn" value="${esc(CS.accessCode)}" autocomplete="off" aria-label="Access code"><button type="button" class="btn primary rp" data-coach="savecode">Save & check</button></div></label>
@@ -753,7 +774,9 @@ document.addEventListener('click', e => {
       break;
     }
     case 'goal': { const [k, delta] = d.v.split(':'); CP.goals[k] = Math.min(7 * (k === 'convos' ? 3 : 1), Math.max(1, CP.goals[k] + Number(delta))); saveCP(); renderProgress(); break; }
-    case 'testvoice': say(`G'day${CS.name ? ` ${CS.name}` : ''}! How are you going? This is how I'll sound.`); break;
+    case 'testvoice': { const n = CS.name ? ` ${CS.name}` : ''; say(CS.accent === 'british' ? `Hiya${n}! You alright? This is how I'll sound.` : `G'day${n}! How are you going? This is how I'll sound.`); break; }
+    case 'forget': CP.memory.splice(+d.v, 1); saveCP(); renderSettings(); break;
+    case 'forgetall': if (confirm('Forget everything your coach remembers about you?')) { CP.memory = []; saveCP(); renderSettings(); } break;
     case 'savecode': CS.accessCode = $('#codeIn').value.trim(); saveCS(); toast('Checking…'); checkStatus().then(() => toast(aiReady() ? 'Connected! The AI tutor is ready.' : ST.ai ? 'That access code is not right.' : 'Saved. The server is not set up yet.')); break;
   }
 });

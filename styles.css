@@ -621,6 +621,8 @@ body[data-lib] .region-dd { display: block; }
 .call .take { max-width: 520px; margin-inline: auto; text-align: left; }
 .mistakes { display: grid; gap: 8px; margin: 4px 0 0; padding: 0; list-style: none; }
 .mistakes .tag { margin-right: 4px; }
+.mem { display: grid; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
+.mem li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 12px; background: var(--surface-2); font-size: 14.5px; }
 .chat-err { margin: 0; color: var(--bad); font-size: 14px; }
 .hint-line { margin: 0; padding: 0 14px 12px; color: var(--muted); font-size: 13px; }
 .stepper { list-style: none; display: flex; gap: 6px; margin: 0 0 16px; padding: 2px; overflow-x: auto; scrollbar-width: none; }

@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   if (guard(req, res, configured.azure)) return;
   const audio = Buffer.from(String(req.body?.audio || ''), 'base64');
   const text = clip(req.body?.text, 300);
-  const lang = req.body?.lang === 'en-US' ? 'en-US' : 'en-AU';
+  const lang = ['en-US', 'en-GB'].includes(req.body?.lang) ? req.body.lang : 'en-AU';
   if (!text || audio.length < 2000 || audio.length > 2_500_000) return send(res, 400, { error: 'Record between 1 and 60 seconds of audio.' });
   const settings = {
     ReferenceText: text, GradingSystem: 'HundredMark', Granularity: 'Word', Dimension: 'Comprehensive', EnableMiscue: true,

@@ -4,6 +4,8 @@ import { guard, configured, clip, send } from './_coach.js';
 const VOICES = {
   'au-female': { name: 'en-AU-NatashaNeural', lang: 'en-AU' },
   'au-male': { name: 'en-AU-WilliamNeural', lang: 'en-AU' },
+  'gb-female': { name: 'en-GB-SoniaNeural', lang: 'en-GB' },
+  'gb-male': { name: 'en-GB-RyanNeural', lang: 'en-GB' },
   'neutral-female': { name: 'en-US-JennyNeural', lang: 'en-US' },
   'neutral-male': { name: 'en-US-GuyNeural', lang: 'en-US' },
 };
